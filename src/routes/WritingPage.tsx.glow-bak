@@ -1,0 +1,379 @@
+// ============================================
+// 4. 写作页面 — 正文智能写作
+// ============================================
+import { useState } from 'react';
+import { useNovelGenesisStore } from '@/lib/store/novelGenesis';
+import { PhaseNav } from '@/components/PhaseNav';
+import { useReveal } from '@/components/hooks';
+
+const AI_TOOLS = [
+  { icon: '\u2726', label: '智能写作', color: '#f0c674', bg: 'rgba(212,166,87,0.12)' },
+  { icon: '\u2726', label: '智能续写', color: '#6ec092', bg: 'rgba(110,192,146,0.1)' },
+  { icon: '\u2699', label: '智能校对', color: '#7a9ef0', bg: 'rgba(122,158,240,0.1)' },
+  { icon: '\u2726', label: '润色去AI', color: '#e85d68', bg: 'rgba(232,93,104,0.1)' },
+  { icon: '\u2699', label: '状态同步', color: '#b890e8', bg: 'rgba(184,144,232,0.1)' },
+];
+
+const selectStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  border: '1px solid var(--ink-border)',
+  borderRadius: 6,
+  fontSize: 12,
+  background: 'var(--ink-surface)',
+  outline: 'none',
+  color: '#e8e4d8',
+  cursor: 'pointer',
+};
+
+const ghostBtn: React.CSSProperties = {
+  padding: '4px 12px',
+  border: '1px solid var(--ink-border)',
+  borderRadius: 6,
+  background: 'var(--ink-surface)',
+  color: '#8a93a8',
+  fontSize: 12,
+  cursor: 'pointer',
+  transition: 'all 0.2s',
+};
+
+const goldBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '4px 12px',
+  border: 'none',
+  borderRadius: 6,
+  background: 'linear-gradient(135deg, #d4a657, #f0c674)',
+  color: '#0a0e1a',
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: 'pointer',
+  boxShadow: '0 2px 8px rgba(212,166,87,0.2)',
+  transition: 'all 0.2s',
+};
+
+export default function WritingPage() {
+  useReveal();
+  const { vars, setVar } = useNovelGenesisStore();
+  const [activeChapter, setActiveChapter] = useState(1);
+  const [wordCount, setWordCount] = useState(0);
+
+  return (
+    <div style={{ background: 'var(--ink-deep)', minHeight: '100vh', paddingTop: 64 }}>
+      <PhaseNav currentPhase={4} />
+
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px 80px' }}>
+        <div
+          className="reveal"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '240px 1fr',
+            gap: 20,
+            alignItems: 'start',
+          }}
+        >
+          {/* Left: Chapter List */}
+          <div
+            style={{
+              background: 'var(--ink-card)',
+              border: '1px solid var(--ink-border)',
+              borderRadius: 16,
+              overflow: 'hidden',
+              boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+              position: 'sticky',
+              top: 72,
+            }}
+          >
+            <div
+              style={{
+                padding: '16px 20px',
+                borderBottom: '1px solid var(--ink-border)',
+              }}
+            >
+              <h3
+                style={{
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: '#e8e4d8',
+                }}
+              >
+                章节目录
+              </h3>
+            </div>
+            <div>
+              {[1, 2, 3].map((ch) => (
+                <div
+                  key={ch}
+                  onClick={() => setActiveChapter(ch)}
+                  style={{
+                    padding: '12px 20px',
+                    cursor: 'pointer',
+                    borderLeft:
+                      activeChapter === ch
+                        ? '3px solid #f0c674'
+                        : '3px solid transparent',
+                    background:
+                      activeChapter === ch ? 'rgba(212,166,87,0.08)' : 'transparent',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (activeChapter !== ch) {
+                      e.currentTarget.style.background = 'rgba(212,166,87,0.04)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (activeChapter !== ch) {
+                      e.currentTarget.style.background = 'transparent';
+                    }
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: activeChapter === ch ? 600 : 400,
+                      color: activeChapter === ch ? '#f0c674' : '#e8e4d8',
+                    }}
+                  >
+                    第{ch}章
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: '#6a7388',
+                      marginTop: 2,
+                    }}
+                  >
+                    第一章:
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right: Editor */}
+          <div>
+            <div
+              style={{
+                background: 'var(--ink-card)',
+                border: '1px solid var(--ink-border)',
+                borderRadius: 16,
+                overflow: 'hidden',
+                boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+              }}
+            >
+              {/* Editor Header */}
+              <div
+                style={{
+                  padding: '20px 24px',
+                  borderBottom: '1px solid var(--ink-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <h2
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: '#f0c674',
+                    fontFamily: '"Noto Serif SC", serif',
+                  }}
+                >
+                  第一章:
+                </h2>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '4px 10px',
+                    border: '1px solid var(--ink-border)',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: '#8a93a8',
+                    background: 'var(--ink-surface)',
+                  }}
+                >
+                  {'\u270E'} {wordCount} 字
+                </div>
+              </div>
+
+              {/* AI Toolbar */}
+              <div
+                style={{
+                  padding: '12px 24px',
+                  borderBottom: '1px solid var(--ink-border)',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 10,
+                  alignItems: 'center',
+                }}
+              >
+                {AI_TOOLS.map((tool, i) => (
+                  <button
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '6px 14px',
+                      borderRadius: 8,
+                      border: `1px solid ${tool.color}30`,
+                      background: tool.bg,
+                      color: tool.color,
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'scale(1.02)';
+                      e.currentTarget.style.boxShadow = `0 2px 8px ${tool.color}30`;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'scale(1)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  >
+                    <span>{tool.icon}</span>
+                    <span>{tool.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Mode Bar */}
+              <div
+                style={{
+                  padding: '10px 24px',
+                  borderBottom: '1px solid var(--ink-border)',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 10,
+                  alignItems: 'center',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, color: '#6a7388' }}>{'\u2699'} 模式:</span>
+                  <select style={selectStyle}>
+                    <option>混合模式</option>
+                    <option>纯AI</option>
+                    <option>辅助模式</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, color: '#6a7388' }}>梗概</span>
+                  <select style={selectStyle}>
+                    <option>3章</option>
+                    <option>5章</option>
+                    <option>10章</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, color: '#6a7388' }}>全文</span>
+                  <select style={selectStyle}>
+                    <option>1章</option>
+                    <option>3章</option>
+                    <option>5章</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, color: '#6a7388' }}>衔接</span>
+                  <select style={selectStyle}>
+                    <option>500字</option>
+                    <option>1000字</option>
+                    <option>2000字</option>
+                  </select>
+                </div>
+                <button style={ghostBtn}>设置作家</button>
+                <button
+                  style={{
+                    ...ghostBtn,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  {'\u270E'} 保存章节
+                </button>
+                <button style={goldBtn}>{'\u2726'} 任务</button>
+              </div>
+
+              {/* Outline Input */}
+              <div
+                style={{
+                  padding: '12px 24px',
+                  borderBottom: '1px solid var(--ink-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#f0c674',
+                    background: 'rgba(212,166,87,0.1)',
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                  }}
+                >
+                  本章大纲
+                </span>
+                <span style={{ fontSize: 12, color: '#6a7388' }}>
+                  (AI 将基于此内容进行扩展)
+                </span>
+                <div style={{ flex: 1 }} />
+                <button
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#6a7388',
+                    fontSize: 14,
+                  }}
+                >
+                  {'\u25BC'}
+                </button>
+              </div>
+
+              {/* Main Editor */}
+              <div style={{ padding: '24px' }}>
+                <textarea
+                  value={vars.content}
+                  onChange={(e) => {
+                    setVar('content', e.target.value);
+                    setWordCount(e.target.value.length);
+                  }}
+                  placeholder="在此处开始写作，或点击上方智能写作让 AI 帮你写..."
+                  style={{
+                    width: '100%',
+                    minHeight: 'calc(100vh - 400px)',
+                    padding: '16px',
+                    border: '1px solid transparent',
+                    borderRadius: 8,
+                    fontSize: 15,
+                    lineHeight: 1.8,
+                    color: '#e8e4d8',
+                    background: 'transparent',
+                    resize: 'vertical',
+                    outline: 'none',
+                    fontFamily: '"Noto Serif SC", "Noto Sans SC", serif',
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.background = 'var(--ink-surface)';
+                    e.currentTarget.style.borderColor = 'var(--ink-border)';
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.borderColor = 'transparent';
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

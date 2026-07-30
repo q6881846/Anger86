@@ -1,0 +1,298 @@
+import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useProjectStore } from '@/lib/store';
+import { useShallow } from 'zustand/react/shallow';
+import { useReveal, useCountUp } from '@/components/hooks';
+
+const floatingWords = ['灵感', '世界观', '角色', '伏笔', '爽点', '主线', '章节', '续写', '质检', '墨文', '创作', '笔锋', '弧光', '打脸', '钩子'];
+
+export default function HomePage() {
+  useReveal();
+  const [words, setWords] = useState<{ id: string; text: string; left: number; duration: number; size: number }[]>([]);
+  const heroRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef(0);
+  const pendingMove = useRef<{ x: number; y: number } | null>(null);
+
+  const { currentBookTitle, bookCount } = useProjectStore(useShallow((s) => ({
+    currentBookTitle: s.bookTitle,
+    bookCount: Object.keys(s.books || {}).length,
+  })));
+
+  // Floating words
+  useEffect(() => {
+    const makeWord = () => ({
+      id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+      text: floatingWords[Math.floor(Math.random() * floatingWords.length)],
+      left: Math.random() * 100,
+      duration: Math.random() * 15 + 15,
+      size: Math.random() * 10 + 14,
+    });
+    const interval = setInterval(() => {
+      setWords((prev) => [...prev.slice(-8), makeWord()]);
+    }, 2500);
+    for (let i = 0; i < 4; i++) {
+      setWords((prev) => [...prev, makeWord()]);
+    }
+    return () => clearInterval(interval);
+  }, []);
+
+  // Mouse parallax
+  const handleMouseMove = (e: React.MouseEvent) => {
+    pendingMove.current = {
+      x: (e.clientX / window.innerWidth - 0.5) * 20,
+      y: (e.clientY / window.innerHeight - 0.5) * 20,
+    };
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      const move = pendingMove.current;
+      if (!move) return;
+      const content = heroRef.current?.querySelector('.hero-content') as HTMLElement | null;
+      if (content) content.style.transform = `translate(${move.x}px, ${move.y}px)`;
+    });
+  };
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); }, []);
+
+  const features = [
+    { icon: '✦', tag: 'Step1 · 灵感', title: 'AI 灵感搅拌', desc: '番茄平台资深策划编辑视角，基于创意+标签生成恰好 3 个差异化方案，含核心梗概、爽点架构、主角人设、开篇钩子及 5 个爆款书名推荐。', tags: ['三方案差异化', '爽点3层级架构', '开篇前3章作战图', '差异化壁垒分析'], color: 'gold' },
+    { icon: '⚡', tag: 'Step1 · 爆款强化', title: '爽点定位', desc: '爆款内容分析师视角，识别最高效的爽点公式。先抑后扬、打脸频率规划、金手指显圣设计，一句话爽点公式锚定全书情绪节奏。', tags: ['读者期待锚点', '打脸4层分层', '金手指显圣设计', '爽点公式提取'], color: 'vermilion' },
+    { icon: '◈', tag: 'Step2 · 架构', title: '世界观构建', desc: '世界观架构师设计可爽可虐可反转的世界。结构化 JSON 输出：时代背景、势力关系、力量体系、法则矛盾——每个势力都有可被主角利用的漏洞。', tags: ['势力关系图谱', '力量等级体系', '法则内在矛盾', '关键地点绑定剧情'], color: 'jade' },
+    { icon: '❖', tag: 'Step2 · 架构', title: '核心角色系统', desc: '固定四角定位：主角(代入容器)、核心对手(打脸储蓄罐)、关键盟友(主角扬声器)、情感锚点(安全感来源)。秘密互相咬合，弧光方向清晰。', tags: ['四角情绪功能', '秘密咬合设计', '角色弧光方向', '死亡伏笔标记'], color: 'indigo' },
+    { icon: '◆', tag: '高级工具', title: '主线脉络', desc: '长篇结构师构建 4-6 卷骨架，8-12 个里程碑节点，含情绪基调、钩子与伏笔埋设回收。', tags: ['卷结构规划表', '里程碑节点链', '长线伏线', '节奏曲线控制'], color: 'plum' },
+    { icon: '※', tag: '高级工具', title: '爽点密度校准', desc: '逐节点统计爽点频率，检测高风险弃书区间。打脸兑现检查、升级节奏校验、翻页动力维持，给出3条以内可操作微调建议（手动调用）。', tags: ['爽点频率热力图', '打脸逾期预警', '升级节奏检查', '翻页动力诊断'], color: 'vermilion' },
+    { icon: '▦', tag: 'Step3 · 编排', title: '章节大纲', desc: '结构化 JSON 输出每章：核心行动、情绪曲线(起承转合)、爽点设计、伏笔埋设回收、章节钩子(强/中/弱)、停笔位置、不得写到边界。', tags: ['情绪波浪曲线', '伏笔双向追踪', '章节钩子强度', '停笔边界控制'], color: 'indigo' },
+    { icon: '⬡', tag: 'Step3 · 编排', title: '逻辑审查', desc: '逐章审查6个维度：因果链、主线对齐、节奏、人设一致性、法则一致性、伏线闭合。自动生成修复建议，可一键修订大纲。', tags: ['6维逻辑审查', '因果链检查', '自动修复建议', '大纲修订'], color: 'gold' },
+    { icon: '✎', tag: 'Step4 · 写作', title: '智能续写 / 成章', desc: '摄像机视角写作——只写拍得到的东西。严格限知视角，对话占比≥40%，动作笨拙真实，结尾停在未完成时。温度0.82激发创作力。', tags: ['摄像机视角', '对话高密度口语化', '视角严格限知', '死循环断路器'], color: 'vermilion' },
+    { icon: '◉', tag: 'Step4 · 质检', title: '章节质检 + 增量修改', desc: '6维质检：剧情符合度、角色一致性、世界观一致性、连续性、伏笔处理、前后文衔接。精准定位原文片段，一键修改，保持字数±10%。', tags: ['6维自动质检', '原文片段定位', '增量修改建议', '无缝替换验证'], color: 'jade' },
+    { icon: '⬢', tag: 'Step4 · 后台', title: '状态同步引擎', desc: '连续性档案管理员逐段扫描正文，自动检测修为/物品/技能/位置/关系/秘密/死亡变更。维护角色状态快照基线，供下一章写作使用。', tags: ['7类变更检测', '状态快照基线', '大纲预期校验', '伏笔超期预警'], color: 'plum' },
+    { icon: '◉', tag: 'Step4 · 卷末', title: '卷级状态盘点（5.3）', desc: '每一卷正文写完后执行一次：盘点本卷达成、角色状态变化、伏笔状态表，并给出下一卷引子，衔接进入下一卷。', tags: ['本卷达成盘点', '角色状态变化', '伏笔状态表', '下卷引子'], color: 'vermilion' },
+    { icon: '✺', tag: 'Step4 · 工具', title: '文本优化套件', desc: '文本优化、篇幅调整(扩写/精简)、视角切换三大工具。替换AI词汇、拆分排比、转化心理独白为动作对话。保持情节骨架不伤毫发。', tags: ['AI词汇替换清单', '扩写精简双模', '限知视角切换', '修改统计输出'], color: 'gold' },
+  ];
+
+  const colorMap: Record<string, string> = {
+    gold: '#f0c674', jade: '#6ec092', indigo: '#7a9ef0', vermilion: '#e85d68', plum: '#b890e8',
+  };
+  const colorSoftMap: Record<string, string> = {
+    gold: 'rgba(212,166,87,0.15)', jade: 'rgba(74,139,111,0.15)', indigo: 'rgba(91,127,212,0.15)', vermilion: 'rgba(201,68,76,0.15)', plum: 'rgba(155,109,212,0.15)',
+  };
+
+  return (
+    <div style={{ position: 'relative', zIndex: 1 }}>
+      {/* Hero */}
+      <section
+        ref={heroRef}
+        onMouseMove={handleMouseMove}
+        style={{ position: 'relative', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '80px 32px 40px' }}
+      >
+        <div style={{ position: 'absolute', width: 600, height: 600, background: 'radial-gradient(circle, rgba(212,166,87,0.15) 0%, transparent 70%)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', pointerEvents: 'none', animation: 'hero-pulse 6s ease-in-out infinite' }} />
+
+        {/* Floating words */}
+        {words.map((w) => (
+          <span key={w.id} aria-hidden="true" style={{ position: 'absolute', fontFamily: '"Noto Serif SC", serif', fontSize: w.size, color: 'rgba(212,166,87,0.12)', pointerEvents: 'none', userSelect: 'none', left: `${w.left}%`, animation: `float-up ${w.duration}s linear infinite` }}>
+            {w.text}
+          </span>
+        ))}
+
+        <div className="hero-content" style={{ position: 'relative', zIndex: 2, maxWidth: 800, transition: 'transform 0.1s' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 16px', background: 'rgba(212,166,87,0.15)', border: '1px solid rgba(212,166,87,0.3)', borderRadius: 100, fontSize: 13, color: '#f0c674', marginBottom: 32, animation: 'fade-down 0.8s cubic-bezier(0.22,1,0.36,1) both' }}>
+            <span style={{ width: 8, height: 8, background: '#6ec092', borderRadius: '50%', animation: 'dot-blink 2s ease-in-out infinite' }} />
+            AI 长篇小说创作引擎 · 全链路提示词驱动
+          </div>
+          <h1 style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 'clamp(48px, 7vw, 88px)', fontWeight: 900, lineHeight: 1.1, marginBottom: 24, animation: 'fade-up 1s cubic-bezier(0.22,1,0.36,1) 0.2s both' }}>
+            <span style={{ background: 'linear-gradient(135deg, #f0c674 0%, #e85d68 40%, #b890e8 70%, #7a9ef0 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', backgroundSize: '200% 200%', animation: 'gradient-flow 8s ease infinite' }}>
+              墨文笔下
+            </span>
+            <br />
+            让 AI 为你执笔
+          </h1>
+          <p style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 'clamp(16px, 2vw, 20px)', color: '#a8b0c0', fontWeight: 300, letterSpacing: 1, marginBottom: 48, animation: 'fade-up 1s cubic-bezier(0.22,1,0.36,1) 0.4s both' }}>
+            从一缕灵感到百万字长篇 — 灵感搅拌、世界观构建、章节编排、智能续写<br />
+            四步工作流，25 个 AI 模块，全链路提示词精细控制每一个创作环节
+          </p>
+          <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap', animation: 'fade-up 1s cubic-bezier(0.22,1,0.36,1) 0.6s both' }}>
+            <Link to="/inspiration" style={{ textDecoration: 'none' }}>
+              <button style={{ padding: '12px 32px', background: 'linear-gradient(135deg, #d4a657, #f0c674)', color: '#0a0e1a', border: 'none', borderRadius: 12, fontFamily: '"Noto Sans SC", sans-serif', fontSize: 15, fontWeight: 700, cursor: 'pointer', transition: 'all 0.3s', boxShadow: '0 4px 20px rgba(212,166,87,0.4)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-3px) scale(1.02)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(212,166,87,0.6)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 4px 20px rgba(212,166,87,0.4)'; }}
+              >
+                {currentBookTitle ? `继续创作「${currentBookTitle}」` : '立即体验创作流'}
+              </button>
+            </Link>
+            <Link to="/settings" style={{ textDecoration: 'none' }}>
+              <button style={{ padding: '12px 32px', background: 'transparent', color: '#e8e4d8', border: '1px solid #3a4a70', borderRadius: 12, fontFamily: '"Noto Sans SC", sans-serif', fontSize: 15, fontWeight: 500, cursor: 'pointer', transition: 'all 0.3s' }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#d4a657'; e.currentTarget.style.background = 'rgba(212,166,87,0.15)'; e.currentTarget.style.color = '#f0c674'; e.currentTarget.style.boxShadow = '0 0 20px rgba(212,166,87,0.2)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#3a4a70'; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#e8e4d8'; e.currentTarget.style.boxShadow='none'; }}
+              >
+                配置 API
+              </button>
+            </Link>
+          </div>
+        </div>
+
+        <div style={{ position: 'absolute', bottom: 32, left: '50%', transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, color: '#6a7388', fontSize: 12 }}>
+          <div style={{ width: 24, height: 38, border: '2px solid #6a7388', borderRadius: 12, position: 'relative' }}>
+            <div style={{ position: 'absolute', top: 6, left: '50%', transform: 'translateX(-50%)', width: 4, height: 8, background: '#d4a657', borderRadius: 2, animation: 'scroll-dot 1.8s ease infinite' }} />
+          </div>
+          <span>向下滚动</span>
+        </div>
+      </section>
+
+      {/* Current Book Bar */}
+      {currentBookTitle && (
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 32px', marginTop: -20 }}>
+          <Link to="/shelf" style={{ textDecoration: 'none' }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '16px 24px', background: 'var(--ink-card)',
+              border: '1px solid rgba(212,166,87,0.2)', borderRadius: 12,
+              transition: 'all 0.3s', cursor: 'pointer',
+            }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(212,166,87,0.4)'; e.currentTarget.style.background = 'rgba(212,166,87,0.05)'; e.currentTarget.style.boxShadow = '0 0 24px rgba(212,166,87,0.15)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(212,166,87,0.2)'; e.currentTarget.style.background = 'var(--ink-card)'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 20 }}>{'\u{1F4D6}'}</span>
+                <div>
+                  <div style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 16, fontWeight: 600, color: '#f0c674' }}>
+                    {currentBookTitle}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6a7388' }}>
+                    书架共 {bookCount} 本书 · 点击管理
+                  </div>
+                </div>
+              </div>
+              <span style={{ color: '#6a7388', fontSize: 14 }}>{'\u2192'}</span>
+            </div>
+          </Link>
+        </div>
+      )}
+
+      {/* Creation Pipeline */}
+      <section style={{ position: 'relative', padding: '96px 32px', maxWidth: 1280, margin: '0 auto' }}>
+        <div className="reveal" style={{ textAlign: 'center', marginBottom: 64 }}>
+          <span style={{ display: 'inline-block', fontSize: 13, fontWeight: 600, color: '#d4a657', letterSpacing: 3, marginBottom: 12 }}>CREATION PIPELINE</span>
+          <h2 style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 'clamp(32px,4vw,48px)', fontWeight: 700, marginBottom: 16 }}>
+            四步<span style={{ color: '#f0c674' }}>创作工作流</span>
+          </h2>
+          <p style={{ fontSize: 16, color: '#a8b0c0', maxWidth: 600, margin: '0 auto' }}>
+            从核心灵感到写作页面，每一步都有 AI 提示词精细驱动。
+          </p>
+        </div>
+
+        <div className="reveal" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 24, marginTop: 48 }}>
+          {[
+            { num: '壹', label: '灵感阶段', desc: 'AI 灵感搅拌 · 爽点定位 · 书名生成', color: '#f0c674', href: '/genesis', tags: ['inspiration', 'hitPositioning', 'titleGen'] },
+            { num: '贰', label: '架构阶段', desc: '世界观 · 角色 · 核心法则', color: '#6ec092', href: '/genesis', tags: ['worldview', 'coreCharacters', 'ruleService'] },
+            { num: '叁', label: '编排阶段', desc: '章节大纲 · 逻辑审查', color: '#7a9ef0', href: '/genesis', tags: ['chapterOutline', 'logicReview'] },
+            { num: '肆', label: '写作阶段', desc: '智能续写 · 质检 · 状态同步', color: '#e85d68', href: '/genesis', tags: ['writing', 'chapterReview', 'stateSync', '+6'] },
+          ].map((step) => (
+            <Link key={step.num} to={step.href} style={{ textDecoration: 'none' }}>
+              <div style={{ textAlign: 'center', cursor: 'pointer', transition: 'transform 0.4s' }}
+                onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-8px)')}
+                onMouseLeave={(e) => (e.currentTarget.style.transform = '')}
+              >
+                <div style={{ width: 80, height: 80, margin: '0 auto 16px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '"Noto Serif SC", serif', fontSize: 28, fontWeight: 700, background: 'var(--ink-card)', border: `2px solid ${step.color}`, color: step.color, transition: 'all 0.4s' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = `0 0 30px ${step.color}50`; e.currentTarget.style.transform = 'scale(1.05)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = ''; }}
+                >
+                  {step.num}
+                </div>
+                <div style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 18, fontWeight: 600, color: '#e8e4d8', marginBottom: 4 }}>{step.label}</div>
+                <div style={{ fontSize: 13, color: '#6a7388' }}>{step.desc}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 12 }}>
+                  {step.tags.map((t) => (
+                    <span key={t} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'var(--ink-surface)', color: '#6a7388', border: '1px solid var(--ink-border)' }}>{t}</span>
+                  ))}
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* Features */}
+      <section style={{ position: 'relative', padding: '96px 32px', maxWidth: 1280, margin: '0 auto' }}>
+        <div className="reveal" style={{ textAlign: 'center', marginBottom: 64 }}>
+          <span style={{ display: 'inline-block', fontSize: 13, fontWeight: 600, color: '#d4a657', letterSpacing: 3, marginBottom: 12 }}>FEATURE MATRIX</span>
+          <h2 style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 'clamp(32px,4vw,48px)', fontWeight: 700, marginBottom: 16 }}>
+            功能<span style={{ color: '#f0c674' }}>矩阵</span>
+          </h2>
+          <p style={{ fontSize: 16, color: '#a8b0c0', maxWidth: 600, margin: '0 auto' }}>
+            25 个 AI 模块覆盖创作全链路，以下为核心功能模块。
+          </p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 24, marginTop: 48 }}>
+          {features.map((f, i) => (
+            <div
+              key={i}
+              className="reveal"
+              style={{ background: 'var(--ink-card)', border: '1px solid var(--ink-border)', borderRadius: 20, padding: 32, position: 'relative', overflow: 'hidden', transition: 'all 0.4s' }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-6px)'; e.currentTarget.style.borderColor = colorMap[f.color]; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.borderColor = 'var(--ink-border)'; e.currentTarget.style.boxShadow='none'; }}
+            >
+              <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: 3, background: colorMap[f.color], transform: 'scaleX(0)', transformOrigin: 'left', transition: 'transform 0.4s' }}
+                onMouseEnter={(e) => (e.currentTarget.style.transform = 'scaleX(1)')}
+              />
+              <div style={{ width: 48, height: 48, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, marginBottom: 16, background: colorSoftMap[f.color], color: colorMap[f.color], border: `1px solid ${colorMap[f.color]}30` }}>
+                {f.icon}
+              </div>
+              <span style={{ display: 'inline-block', fontSize: 11, padding: '2px 10px', borderRadius: 100, background: colorSoftMap[f.color], color: colorMap[f.color], marginBottom: 12, fontWeight: 500 }}>{f.tag}</span>
+              <h3 style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 20, fontWeight: 600, marginBottom: 8, color: '#e8e4d8' }}>{f.title}</h3>
+              <p style={{ fontSize: 14, color: '#a8b0c0', lineHeight: 1.7, marginBottom: 16 }}>{f.desc}</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {f.tags.map((t) => (
+                  <span key={t} style={{ fontSize: 12, padding: '3px 10px', borderRadius: 6, background: 'var(--ink-surface)', color: '#a8b0c0', border: '1px solid var(--ink-border)' }}>{t}</span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Stats */}
+      <section style={{ position: 'relative', padding: '96px 32px', maxWidth: 1280, margin: '0 auto' }}>
+        <div className="reveal" style={{ textAlign: 'center', marginBottom: 64 }}>
+          <span style={{ display: 'inline-block', fontSize: 13, fontWeight: 600, color: '#d4a657', letterSpacing: 3, marginBottom: 12 }}>CREATION DATA</span>
+          <h2 style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 'clamp(32px,4vw,48px)', fontWeight: 700 }}>
+            创作<span style={{ color: '#f0c674' }}>数据驾驶舱</span>
+          </h2>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 24 }}>
+          {[
+            { num: 25, label: 'AI 创作模块', color: '#f0c674' },
+            { num: 4, label: '阶段工作流', color: '#6ec092' },
+            { num: 6, label: '质检审查维度', color: '#7a9ef0' },
+            { num: 100, label: '% 提示词可覆盖', color: '#b890e8' },
+          ].map((s, i) => (
+            <StatBlock key={i} target={s.num} label={s.label} color={s.color} />
+          ))}
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer style={{ borderTop: '1px solid var(--ink-border)', padding: '48px 32px', textAlign: 'center', background: 'var(--ink-night)' }}>
+        <div style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 24, fontWeight: 700, color: '#f0c674', marginBottom: 8 }}>墨文写作</div>
+        <p style={{ fontSize: 13, color: '#6a7388', maxWidth: 500, margin: '0 auto 16px' }}>AI 长篇小说创作引擎 — 全链路提示词驱动，从灵感到百万字长篇</p>
+        <div style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 15, color: '#a8b0c0', padding: '16px 32px', borderTop: '1px solid var(--ink-border)', borderBottom: '1px solid var(--ink-border)', maxWidth: 600, margin: '24px auto 0' }}>
+          {`“你是摄像机，只记录，不解释。文字是刀，切进去，拔出来，读者才感到疼。”`}
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function StatBlock({ target, label, color }: { target: number; label: string; color: string }) {
+  useCountUp(target);
+  return (
+    <div className="reveal" style={{ textAlign: 'center', padding: '32px 16px', background: 'var(--ink-card)', border: '1px solid var(--ink-border)', borderRadius: 20, transition: 'all 0.4s' }}
+      onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-6px)'; e.currentTarget.style.borderColor = color + '50'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.borderColor = 'var(--ink-border)'; e.currentTarget.style.boxShadow='none'; }}
+    >
+      <div style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 'clamp(32px,4vw,48px)', fontWeight: 900, color, marginBottom: 4 }}>
+        <span data-target={target}>0</span>
+      </div>
+      <div style={{ fontSize: 14, color: '#a8b0c0' }}>{label}</div>
+    </div>
+  );
+}

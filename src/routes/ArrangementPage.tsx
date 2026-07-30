@@ -1,0 +1,782 @@
+// ============================================
+// 3. 编排与生成页面 — 风格、基调、进度、生成
+// ============================================
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useNovelGenesisStore } from '@/lib/store/novelGenesis';
+import { PhaseNav } from '@/components/PhaseNav';
+import { useReveal } from '@/components/hooks';
+import { usePromptModalStore } from '@/lib/store/promptModalStore';
+import { getStepOutput, saveStepOutput } from '@/lib/db/stepOutputs';
+import { runStepLLM } from '@/hooks/useGenesisStep';
+import { parseStep12Acts, actRequirementsText } from '@/lib/parsers/step12Parser';
+import { useProjectStore } from '@/lib/store/projectStore';
+import { ChapterOutlineCards } from '@/components/ChapterOutlineCards';
+import { parseStep15ToOutlines } from '@/lib/outlineParser';
+
+/**
+ * 从 step12 完整骨架里，只截取「当前幕/节点」这一段，传给 step15。
+ * 目的：step15 本就逐幕调用，完整骨架会让请求体（含插值后的提示词）远超后端限制，
+ *       且徒增 token。切片后保留本幕的节点编号与要素，上下文不丢失。
+ * 兜底：若按标题匹配不到（格式异常），回退为原文前 4000 字符，绝不比现况更差。
+ */
+function extractActSection(fullText: string, actTitle: string): string {
+  if (!fullText) return '';
+  if (!actTitle) return fullText.slice(0, 4000);
+  const escaped = actTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(
+    `(#{0,4}\\s*(?:幕|节点|子节点)\\s*\\d+\\s*[:：]\\s*${escaped}[\\s\\S]*?)` +
+      `(?=#{0,4}\\s*(?:幕|节点|子节点)\\s*\\d+\\s*[:：]|###\\s*卷|$)`,
+    'i',
+  );
+  const m = fullText.match(regex);
+  return m ? m[1].trim() : fullText.slice(0, 4000);
+}
+
+const STYLES = [
+  '小白文', '老白文', '华丽辞藻', '极简主义', '史书笔法', '轻小说', '意识流',
+  '古风古韵', '翻译腔', '电影镜头感', '红楼梦体', '大白话', '沙雕搞笑',
+  '硬核写实', '热血燃向', '暗黑压抑', '温馨治愈', '毒舌吐槽', '权谋博弈',
+  '无厘头', '慢热细腻', '快节奏爽文', '悬疑烧脑', '虐心催泪', '游戏叙事',
+  '旁白式', '对话驱动', '复古民国', '江湖气', '二次元吐槽', '网文快节奏',
+  '传统文学风', '方言口语', '赛博朋克风', '克苏鲁晦涩风', '自定义',
+];
+
+const TONES = [
+  '热血', '悲剧', '喜剧', '虐心', '悬疑', '惊悚', '治愈', '温馨', '暗黑',
+  '压抑', '轻松', '沙雕', '史诗', '宏大', '诡异', '克系', '现实', '讽刺',
+  '甜宠', '发糖', '燃向', '爽文', '硬核', '无厘头', '反套路', '烧脑',
+  '励志', '幽默', '睿智', '猎奇', '温情', '自定义',
+];
+
+const selectStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '8px 12px',
+  border: '1px solid var(--ink-border)',
+  borderRadius: 8,
+  fontSize: 13,
+  background: 'var(--ink-surface)',
+  outline: 'none',
+  color: '#e8e4d8',
+  cursor: 'pointer',
+};
+
+const ghostBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '8px 16px',
+  border: '1px solid var(--ink-border)',
+  borderRadius: 8,
+  background: 'var(--ink-surface)',
+  color: '#8a93a8',
+  fontSize: 13,
+  fontWeight: 500,
+  cursor: 'pointer',
+  transition: 'all 0.2s',
+};
+
+const goldBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '8px 18px',
+  background: 'linear-gradient(135deg, #d4a657, #f0c674)',
+  color: '#0a0e1a',
+  border: 'none',
+  borderRadius: 8,
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: 'pointer',
+  boxShadow: '0 4px 16px rgba(212,166,87,0.25)',
+  transition: 'all 0.2s',
+};
+
+const smallBtnGold: React.CSSProperties = {
+  padding: '4px 10px',
+  border: '1px solid rgba(212,166,87,0.3)',
+  borderRadius: 6,
+  background: 'rgba(212,166,87,0.1)',
+  color: '#d4a657',
+  fontSize: 11,
+  fontWeight: 600,
+  cursor: 'pointer',
+  transition: 'all 0.2s',
+};
+
+export default function ArrangementPage() {
+  useReveal();
+  const openPromptModal = usePromptModalStore((s) => s.openModal);
+  const { vars, setVar } = useNovelGenesisStore();
+  const [selectedStyle, setSelectedStyle] = useState(vars.style || '小白文');
+  const [selectedTone, setSelectedTone] = useState(vars.tone || '热血');
+  const [progress, setProgress] = useState(0);
+  const [batchMode, setBatchMode] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [genAmount, setGenAmount] = useState(10); // 生成数量下拉框：实际生效的章数上限
+
+  return (
+    <div style={{ background: 'var(--ink-deep)', minHeight: '100vh', paddingTop: 64 }}>
+      <PhaseNav currentPhase={3} />
+
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 24px 80px' }}>
+        {/* Page Header */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 24,
+          }}
+          className="reveal"
+        >
+          <h1
+            style={{
+              fontSize: 26,
+              fontWeight: 700,
+              color: '#f0c674',
+              fontFamily: '"Noto Serif SC", serif',
+            }}
+          >
+            3. 编排与生成
+          </h1>
+          <Link to="/writing" style={{ textDecoration: 'none' }}>
+            <button
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '12px 24px',
+                background: 'linear-gradient(135deg, #d4a657, #f0c674)',
+                color: '#0a0e1a',
+                border: 'none',
+                borderRadius: 10,
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: 'pointer',
+                boxShadow: '0 4px 20px rgba(212,166,87,0.3)',
+                transition: 'all 0.3s cubic-bezier(0.22,1,0.36,1)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateX(4px)';
+                e.currentTarget.style.boxShadow = '0 8px 32px rgba(212,166,87,0.45)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateX(0)';
+                e.currentTarget.style.boxShadow = '0 4px 20px rgba(212,166,87,0.3)';
+              }}
+            >
+              <span>下一步: 正文写作</span>
+              <span>{'\u203A'}</span>
+            </button>
+          </Link>
+        </div>
+
+        {/* 章节配置与生成 */}
+        <div
+          className="reveal"
+          style={{
+            background: 'var(--ink-card)',
+            border: '1px solid var(--ink-border)',
+            borderRadius: 16,
+            overflow: 'hidden',
+            boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+            marginBottom: 20,
+          }}
+        >
+          <div
+            style={{
+              padding: '20px 24px',
+              borderBottom: '1px solid var(--ink-border)',
+            }}
+          >
+            <h2
+              style={{
+                fontSize: 17,
+                fontWeight: 700,
+                color: '#e8e4d8',
+              }}
+            >
+              章节配置与生成
+            </h2>
+          </div>
+
+          <div style={{ padding: '24px' }}>
+            {/* 风格 & 基调 */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 24,
+                marginBottom: 24,
+              }}
+            >
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#8a93a8',
+                    marginBottom: 12,
+                  }}
+                >
+                  行文风格
+                </label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {STYLES.map((style) => (
+                    <button
+                      key={style}
+                      onClick={() => {
+                        setSelectedStyle(style);
+                        setVar('style', style);
+                      }}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 20,
+                        border:
+                          selectedStyle === style
+                            ? '1px solid rgba(212,166,87,0.5)'
+                            : '1px solid var(--ink-border)',
+                        background: selectedStyle === style ? 'rgba(212,166,87,0.15)' : 'var(--ink-surface)',
+                        color: selectedStyle === style ? '#f0c674' : '#8a93a8',
+                        fontSize: 13,
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s cubic-bezier(0.22,1,0.36,1)',
+                        userSelect: 'none',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (selectedStyle !== style) {
+                          e.currentTarget.style.borderColor = 'rgba(212,166,87,0.3)';
+                          e.currentTarget.style.color = '#d4a657';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (selectedStyle !== style) {
+                          e.currentTarget.style.borderColor = 'var(--ink-border)';
+                          e.currentTarget.style.color = '#8a93a8'; e.currentTarget.style.boxShadow='none';
+                        }
+                      }}
+                    >
+                      {style}
+                    </button>
+                  ))}
+                  <button
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 20,
+                      border: '1px dashed var(--ink-border-bright)',
+                      background: 'var(--ink-surface)',
+                      color: '#6a7388',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#8a93a8',
+                    marginBottom: 12,
+                  }}
+                >
+                  情感基调
+                </label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {TONES.map((tone) => (
+                    <button
+                      key={tone}
+                      onClick={() => {
+                        setSelectedTone(tone);
+                        setVar('tone', tone);
+                      }}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 20,
+                        border:
+                          selectedTone === tone
+                            ? '1px solid rgba(212,166,87,0.5)'
+                            : '1px solid var(--ink-border)',
+                        background: selectedTone === tone ? 'rgba(212,166,87,0.15)' : 'var(--ink-surface)',
+                        color: selectedTone === tone ? '#f0c674' : '#8a93a8',
+                        fontSize: 13,
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s cubic-bezier(0.22,1,0.36,1)',
+                        userSelect: 'none',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (selectedTone !== tone) {
+                          e.currentTarget.style.borderColor = 'rgba(212,166,87,0.3)';
+                          e.currentTarget.style.color = '#d4a657';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (selectedTone !== tone) {
+                          e.currentTarget.style.borderColor = 'var(--ink-border)';
+                          e.currentTarget.style.color = '#8a93a8'; e.currentTarget.style.boxShadow='none';
+                        }
+                      }}
+                    >
+                      {tone}
+                    </button>
+                  ))}
+                  <button
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 20,
+                      border: '1px dashed var(--ink-border-bright)',
+                      background: 'var(--ink-surface)',
+                      color: '#6a7388',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 剧情推进进度 */}
+            <div
+              style={{
+                background: 'var(--ink-surface)',
+                border: '1px solid var(--ink-border)',
+                borderRadius: 12,
+                padding: '20px 24px',
+                marginBottom: 24,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 12,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: '#8a93a8' }}>
+                    {'\u2699'} 剧情推进进度
+                  </span>
+                </div>
+                <span
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: '#f0c674',
+                  }}
+                >
+                  {progress}%
+                </span>
+              </div>
+              <div
+                style={{
+                  height: 8,
+                  background: 'var(--ink-deep)',
+                  borderRadius: 4,
+                  overflow: 'hidden',
+                  marginBottom: 8,
+                }}
+              >
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${progress}%`,
+                    background: 'linear-gradient(90deg, #d4a657, #f0c674)',
+                    borderRadius: 4,
+                    transition: 'width 0.6s cubic-bezier(0.22,1,0.36,1)',
+                    boxShadow: '0 0 8px rgba(212,166,87,0.4)',
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 11,
+                  color: '#6a7388',
+                }}
+              >
+                <span>初始 (0%)</span>
+                <span style={{ color: '#f0c674' }}>{'\u25BC'} 当前底线 ({progress}%)</span>
+                <span>完结 (100%)</span>
+              </div>
+            </div>
+
+            {/* 生成控制 */}
+            <div
+              style={{
+                background: 'var(--ink-surface)',
+                border: '1px solid var(--ink-border)',
+                borderRadius: 12,
+                padding: '20px 24px',
+                marginBottom: 20,
+              }}
+            >
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '140px 1fr 120px',
+                  gap: 16,
+                  alignItems: 'end',
+                }}
+              >
+                <div>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#6a7388',
+                      marginBottom: 6,
+                    }}
+                  >
+                    前文参考范围
+                  </label>
+                  <select style={selectStyle}>
+                    <option>最近 5 章</option>
+                    <option>最近 3 章</option>
+                    <option>最近 1 章</option>
+                    <option>全部</option>
+                  </select>
+                </div>
+                <div>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#6a7388',
+                      marginBottom: 6,
+                    }}
+                  >
+                    当前剧情焦点 / 任务
+                  </label>
+                  <select style={selectStyle}>
+                    <option>全部剧情节点传入 (AI 自由发挥)</option>
+                    <option>聚焦当前节点</option>
+                    <option>自定义焦点</option>
+                  </select>
+                </div>
+                <div>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#6a7388',
+                      marginBottom: 6,
+                    }}
+                  >
+                    生成数量
+                  </label>
+                  <select
+                    style={selectStyle}
+                    value={`${genAmount} 章`}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value.replace(/\D/g, ''), 10);
+                      if (!isNaN(n)) setGenAmount(n);
+                    }}
+                  >
+                    <option>10 章</option>
+                    <option>5 章</option>
+                    <option>3 章</option>
+                    <option>1 章</option>
+                  </select>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  gap: 10,
+                  marginTop: 16,
+                }}
+              >
+                <button onClick={() => openPromptModal('step15')} style={ghostBtn}>{'\u2699'} 提示词</button>
+                <button
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '8px 14px',
+                    border: '1px solid rgba(232,93,104,0.3)',
+                    borderRadius: 8,
+                    background: 'rgba(232,93,104,0.08)',
+                    color: '#e85d68',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  {'\u26A0'} 逻辑审查
+                </button>
+                <button onClick={() => openPromptModal('step15')} style={ghostBtn}>{'\u2699'} 提示词</button>
+                <button
+                  onClick={async () => {
+                    const pid = useNovelGenesisStore.getState().projectId;
+                    if (!pid) { alert('请先在灵感/世界观阶段创建项目'); return; }
+                    // step12（卷/幕骨架）实际持久化在 store 的 vars.detailedPlot，
+                    // 而非 IndexedDB 的 step::12 记录，故从这里读取（getStepOutput 作兜底）。
+                    const step12content =
+                      useNovelGenesisStore.getState().vars.detailedPlot ||
+                      (await getStepOutput(pid, 12))?.content ||
+                      '';
+                    if (!step12content.trim()) { alert('请先完成 step12（卷/幕骨架）再生成大纲'); return; }
+                    const acts = parseStep12Acts(step12content);
+                    if (acts.length === 0) {
+                      alert('未能从 step12 解析出「幕」结构。\nstep12 开头内容（请贴给开发者确认格式）：\n\n' + step12content.slice(0, 400));
+                      return;
+                    }
+                    if (!confirm(`将按幕顺序生成前 ${genAmount} 章大纲（共检测到 ${acts.length} 个幕，按预估章节数顺次截取），是否继续？`)) return;
+                    setGenerating(true);
+                    try {
+                      // genAmount 是「总共要生成的章数」上限，按幕顺序截取前 N 章，
+                      // 避免把整本书（step12 全部预估章节之和，可能 80+ 章）一次性生成出来。
+                      let remaining = genAmount;
+                      let combined = '';
+                      let generatedActs = 0;
+                      for (const act of acts) {
+                        if (remaining <= 0) break;
+                        const share = Math.min(act.estimatedChapters || 1, remaining);
+                        remaining -= share;
+                        generatedActs += 1;
+                        const actSummary =
+                          `当前幕：${act.title}\n功能：${act.func}\n冲突原型：${act.conflictType}\n` +
+                          `必须包含要素：${act.mustInclude.join('；')}\n情绪要求：${act.emotion}`;
+                        const base = useNovelGenesisStore.getState().getVarsForStep(15);
+                        // 优化：只把「当前幕」的骨架传给 step15，避免完整骨架撑爆请求体（见后端 10MB 限制）
+                        const slicedDetailedPlot = extractActSection(
+                          String((base.detailedPlot as string) || ''),
+                          act.title,
+                        );
+                        const { output } = await runStepLLM(
+                          15,
+                          {
+                            ...base,
+                            detailedPlot: slicedDetailedPlot,
+                            amount: String(share),
+                            focusBeatInstruction: actSummary,
+                            actRequirements: actRequirementsText(act),
+                            actEmotion: act.emotion,
+                          },
+                          pid,
+                        );
+                        combined += `\n\n# ${act.title}\n\n${output}`;
+                      }
+                      await saveStepOutput(pid, 15, { type: 'markdown', content: combined.trim(), updatedAt: Date.now() });
+                      const outlines = parseStep15ToOutlines(combined).slice(0, genAmount);
+                      useProjectStore.getState().setChapterOutlines(outlines);
+                      useNovelGenesisStore.getState().finalizeStep(15, `project::${pid}::step::15`, 'markdown');
+                      if (outlines.length === 0 && !combined.trim()) {
+                        alert('已执行，但 step15 返回内容为空（疑似 LongCat 推理模型未输出正文）。请重试或检查后端日志。');
+                      } else {
+                        alert(`已生成前 ${genAmount} 章大纲（覆盖 ${generatedActs}/${acts.length} 个幕），解析出 ${outlines.length} 章，已同步到章节大纲卡片`);
+                      }
+                    } catch (e) {
+                      alert('生成失败：' + (e instanceof Error ? e.message : String(e)));
+                    } finally {
+                      setGenerating(false);
+                    }
+                  }}
+                  disabled={generating}
+                  style={{
+                    ...goldBtn,
+                    padding: '10px 20px',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'scale(1.02)'; e.currentTarget.style.boxShadow='0 8px 32px rgba(212,166,87,0.4)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow='none';
+                  }}
+                >
+                  {'\u2726'} 按幕批量生成大纲
+                </button>
+              </div>
+              <ChapterOutlineCards />
+            </div>
+
+            {/* 批量管理与任务 */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 16,
+              }}
+            >
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  onClick={() => setBatchMode(!batchMode)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '8px 16px',
+                    border: batchMode
+                      ? '1px solid rgba(212,166,87,0.4)'
+                      : '1px solid var(--ink-border)',
+                    borderRadius: 8,
+                    background: batchMode ? 'rgba(212,166,87,0.1)' : 'var(--ink-surface)',
+                    color: batchMode ? '#f0c674' : '#8a93a8',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  {'\u2699'} 批量管理
+                </button>
+                <button style={goldBtn}>{'\u2726'} 任务</button>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 12px',
+                    border: '1px solid var(--ink-border)',
+                    borderRadius: 6,
+                    background: 'var(--ink-surface)',
+                    fontSize: 12,
+                    color: '#8a93a8',
+                  }}
+                >
+                  {'\u2699'} 范围:
+                  <input
+                    type="number"
+                    defaultValue={1}
+                    style={{
+                      width: 40,
+                      padding: '2px 6px',
+                      border: '1px solid var(--ink-border)',
+                      borderRadius: 4,
+                      fontSize: 12,
+                      textAlign: 'center',
+                      background: 'var(--ink-deep)',
+                      color: '#e8e4d8',
+                      outline: 'none',
+                    }}
+                  />
+                  -
+                  <input
+                    type="number"
+                    defaultValue={1}
+                    style={{
+                      width: 40,
+                      padding: '2px 6px',
+                      border: '1px solid var(--ink-border)',
+                      borderRadius: 4,
+                      fontSize: 12,
+                      textAlign: 'center',
+                      background: 'var(--ink-deep)',
+                      color: '#e8e4d8',
+                      outline: 'none',
+                    }}
+                  />
+                  章
+                </div>
+                <button style={smallBtnGold}>{'\u2726'} 扫描角色</button>
+                <button
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--ink-border)',
+                    borderRadius: 6,
+                    background: 'var(--ink-surface)',
+                    color: '#8a93a8',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  + 插入分卷
+                </button>
+              </div>
+            </div>
+
+            {/* 章节列表 */}
+            <div
+              style={{
+                background: 'var(--ink-surface)',
+                border: '1px solid var(--ink-border)',
+                borderRadius: 12,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  padding: '14px 20px',
+                  borderBottom: '1px solid var(--ink-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                }}
+              >
+                <span style={{ fontSize: 13, color: '#6a7388', fontWeight: 600 }}>
+                  {'\u2630'}
+                </span>
+                <span
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: '#f0c674',
+                    background: 'rgba(212,166,87,0.1)',
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                  }}
+                >
+                  #1
+                </span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#e8e4d8' }}>
+                  第一章:
+                </span>
+              </div>
+              <div style={{ padding: '16px 20px' }}>
+                <textarea
+                  placeholder="在此输入章节内容..."
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid var(--ink-border)',
+                    borderRadius: 8,
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                    color: '#e8e4d8',
+                    background: 'var(--ink-deep)',
+                    resize: 'vertical',
+                    outline: 'none',
+                    fontFamily: '"Noto Sans SC", sans-serif',
+                    transition: 'border-color 0.2s, box-shadow 0.2s',
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = 'rgba(212,166,87,0.4)';
+                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(212,166,87,0.08)';
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--ink-border)';
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

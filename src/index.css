@@ -1,0 +1,228 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink-deep: #0a0e1a;
+  --ink-night: #111827;
+  --ink-surface: #161e2e;
+  --ink-card: #1a2338;
+  --ink-border: #2a3650;
+  --ink-border-bright: #3a4a70;
+  --bodhi-gold: #d4a657;
+  --bodhi-gold-bright: #f0c674;
+  --bodhi-gold-soft: rgba(212,166,87,0.15);
+  --jade: #4a8b6f;
+  --jade-bright: #6ec092;
+  --vermilion: #c9444c;
+  --vermilion-bright: #e85d68;
+  --plum: #9b6dd4;
+  --plum-bright: #b890e8;
+  --text-primary: #e8e4d8;
+  --text-secondary: #b8c0d0;
+  --text-muted: #8a93a8;
+  --ease-out: cubic-bezier(0.22,1,0.36,1);
+  --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--ink-deep);
+  color: var(--text-primary);
+  font-family: var(--font-sans, 'Noto Sans SC', sans-serif);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--ink-deep); }
+::-webkit-scrollbar-thumb { background: var(--ink-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-border-bright); }
+
+/* ---- Animations ---- */
+@keyframes gradient-flow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+@keyframes dot-blink {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px currentColor; }
+  50% { opacity: 0.4; }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-down {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes float-up {
+  0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(-100px) rotate(360deg); opacity: 0; }
+}
+@keyframes blink-caret {
+  0%, 100% { border-color: var(--bodhi-gold); }
+  50% { border-color: transparent; }
+}
+@keyframes scroll-dot {
+  0% { top: 6px; opacity: 1; }
+  100% { top: 24px; opacity: 0; }
+}
+@keyframes hero-pulse {
+  0%, 100% { transform: translate(-50%,-50%) scale(1); opacity: 0.6; }
+  50% { transform: translate(-50%,-50%) scale(1.2); opacity: 1; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes particle-rise {
+  0% { transform: translateY(0) translateX(0); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(-105vh) translateX(var(--drift, 0px)); opacity: 0; }
+}
+@keyframes skeleton-breath {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(212,166,87,0.2), 0 0 24px rgba(212,166,87,0.1); }
+  50% { box-shadow: 0 0 20px rgba(212,166,87,0.35), 0 0 40px rgba(212,166,87,0.15); }
+}
+
+/* ---- Global Glow Effects (pseudo-element, no conflict with inline styles) ---- */
+.glow-button {
+  position: relative;
+  overflow: visible;
+}
+.glow-button::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: 0 4px 24px rgba(212,166,87,0.35), 0 0 16px rgba(212,166,87,0.2);
+  opacity: 0;
+  transition: opacity 0.3s var(--ease-out);
+  pointer-events: none;
+  z-index: -1;
+}
+.glow-button:hover::before {
+  opacity: 1;
+}
+
+.glow-card {
+  position: relative;
+  transition: all 0.4s var(--ease-out);
+}
+.glow-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3), 0 0 0 1px var(--ink-border);
+  transition: all 0.4s var(--ease-out);
+  pointer-events: none;
+  z-index: -1;
+}
+.glow-card:hover::before {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 20px rgba(212,166,87,0.15), 0 0 0 1px rgba(212,166,87,0.25);
+}
+.glow-card:hover {
+  transform: translateY(-2px);
+}
+
+.glow-input {
+  position: relative;
+  transition: all 0.3s var(--ease-out);
+}
+.glow-input:focus {
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2), 0 0 0 2px rgba(212,166,87,0.3), 0 0 12px rgba(212,166,87,0.15);
+}
+
+.glow-active {
+  position: relative;
+}
+.glow-active::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: 0 0 0 2px rgba(212,166,87,0.4), 0 0 16px rgba(212,166,87,0.2);
+  animation: glow-pulse 3s ease-in-out infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.glow-border {
+  position: relative;
+}
+.glow-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: 0 0 0 1px var(--ink-border);
+  transition: box-shadow 0.4s var(--ease-out);
+  pointer-events: none;
+  z-index: -1;
+}
+.glow-border:hover::before {
+  box-shadow: 0 0 0 1px rgba(212,166,87,0.3), 0 4px 20px rgba(212,166,87,0.1);
+}
+
+.glow-green {
+  position: relative;
+}
+.glow-green::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: 0 0 0 2px rgba(110,192,146,0.3), 0 0 12px rgba(110,192,146,0.15);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.glow-vermilion {
+  position: relative;
+}
+.glow-vermilion::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: 0 0 0 2px rgba(232,93,104,0.3), 0 0 12px rgba(232,93,104,0.15);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.glow-text {
+  text-shadow: 0 0 8px rgba(212,166,87,0.3);
+}
+
+/* ---- Reveal Animation (keep existing) ---- */
+.reveal { opacity: 1; transform: none; transition: opacity 0.8s var(--ease-out), transform 0.8s var(--ease-out); }
+html.js-anim .reveal { opacity: 0; transform: translateY(40px); }
+html.js-anim .reveal.visible { opacity: 1; transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

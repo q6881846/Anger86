@@ -1,0 +1,827 @@
+// ============================================
+// Step Wizard — 20步流水线向导
+// 左侧步骤导航 + 右侧步骤执行面板
+// ============================================
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useParams } from 'react-router-dom';
+import { useNovelGenesisStore } from '@/lib/store/novelGenesis';
+import { useGenesisStep } from '@/hooks/useGenesisStep';
+import { getStepOutput } from '@/lib/db/stepOutputs';
+import { getStepMeta, getStepsByPhase } from '@/lib/step-config';
+import { useReveal } from '@/components/hooks';
+import type { StepMeta } from '@/lib/step-config';
+
+const PHASE_COLORS: Record<number, string> = {
+  1: '#f0c674',
+  2: '#6ec092',
+  3: '#b890e8',
+  4: '#e85d68',
+};
+
+const PHASE_ICONS: Record<number, string> = {
+  1: '壹',
+  2: '贰',
+  3: '叁',
+  4: '肆',
+};
+
+export default function GenesisWizardPage() {
+  useReveal();
+  const { projectId } = useParams<{ projectId: string }>();
+  const pid = projectId || 'default';
+
+  const {
+    vars,
+    steps,
+    currentStep,
+    streamBuffer,
+    setProjectId,
+    setVar,
+    load,
+    loadStepOutputs,
+    jumpToStep,
+  } = useNovelGenesisStore();
+
+  const { executeStep, executeStreamStep, isLoading } = useGenesisStep();
+  const [outputContent, setOutputContent] = useState<string>('');
+  const [showVars, setShowVars] = useState(false);
+  const loadedRef = useRef(false);
+
+  // 初始化加载
+  useEffect(() => {
+    setProjectId(pid);
+    if (!loadedRef.current) {
+      loadedRef.current = true;
+      load(pid).then(() => loadStepOutputs(pid));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pid]);
+
+  // 加载当前步骤输出
+  const loadOutput = useCallback(async (stepId: number) => {
+    const data = await getStepOutput(pid, stepId);
+    setOutputContent(data?.content || '');
+  }, [pid]);
+
+  useEffect(() => {
+    loadOutput(currentStep);
+  }, [currentStep, loadOutput]);
+
+  const currentMeta = getStepMeta(currentStep);
+  const currentStepState = steps.find((s) => s.stepId === currentStep);
+
+  const handleExecute = async () => {
+    const stepVars = useNovelGenesisStore.getState().getVarsForStep(currentStep);
+    const meta = getStepMeta(currentStep);
+    if (!meta) return;
+
+    if (meta.isStream) {
+      executeStreamStep({
+        projectId: pid,
+        stepId: currentStep,
+        variables: stepVars,
+      });
+    } else {
+      executeStep({
+        projectId: pid,
+        stepId: currentStep,
+        variables: stepVars,
+      });
+    }
+  };
+
+  const handleNext = () => {
+    if (currentStep < 20) jumpToStep(currentStep + 1);
+  };
+
+  const handlePrev = () => {
+    if (currentStep > 1) jumpToStep(currentStep - 1);
+  };
+
+  return (
+    <div style={{ display: 'flex', minHeight: 'calc(100vh - 64px)', paddingTop: 64, position: 'relative', zIndex: 1 }}>
+      {/* 左侧步骤导航 */}
+      <aside style={{
+        width: 300,
+        flexShrink: 0,
+        background: 'var(--ink-night)',
+        borderRight: '1px solid var(--ink-border)',
+        overflowY: 'auto',
+        padding: '24px 0',
+      }}>
+        <div style={{ padding: '0 20px 16px', borderBottom: '1px solid var(--ink-border)' }}>
+          <div style={{ fontSize: 11, color: '#6a7388', letterSpacing: 2, marginBottom: 4 }}>CREATION PIPELINE</div>
+          <div style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 18, fontWeight: 700, color: '#f0c674' }}>
+            小说创作流水线
+          </div>
+          <div style={{ fontSize: 12, color: '#8a93a8', marginTop: 4 }}>20 步 AI 驱动 · 全链路提示词</div>
+        </div>
+
+        {[1, 2, 3, 4].map((phase) => {
+          const phaseSteps = getStepsByPhase(phase);
+          return (
+            <div key={phase} style={{ marginTop: 16 }}>
+              <div style={{
+                padding: '8px 20px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}>
+                <span style={{
+                  width: 28, height: 28, borderRadius: '50%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontFamily: '"Noto Serif SC", serif', fontSize: 14, fontWeight: 700,
+                  background: `${PHASE_COLORS[phase]}15`,
+                  border: `1px solid ${PHASE_COLORS[phase]}40`,
+                  color: PHASE_COLORS[phase],
+                }}>
+                  {PHASE_ICONS[phase]}
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#b8c0d0' }}>
+                  {['灵感阶段', '架构阶段', '编排阶段', '写作阶段'][phase - 1]}
+                </span>
+              </div>
+
+              {phaseSteps.map((step) => {
+                const st = steps.find((s) => s.stepId === step.id);
+                const isActive = currentStep === step.id;
+                const isDone = st?.status === 'success';
+                const isLoading = st?.status === 'loading' || st?.status === 'streaming';
+                const isError = st?.status === 'error';
+
+                return (
+                  <button
+                    key={step.id}
+                    onClick={() => jumpToStep(step.id)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 20px 10px 56px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      background: isActive ? `${step.color}10` : 'transparent',
+                      border: 'none',
+                      borderLeft: isActive ? `3px solid ${step.color}` : '3px solid transparent',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      textAlign: 'left',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isActive) e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    <span style={{
+                      width: 22, height: 22, borderRadius: '50%',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 10, fontWeight: 700, flexShrink: 0,
+                      background: isDone ? step.color : 'var(--ink-surface)',
+                      color: isDone ? '#0a0e1a' : '#6a7388',
+                      border: isLoading ? `2px solid ${step.color}` : 'none',
+                      animation: isLoading ? 'spin 1s linear infinite' : 'none',
+                    }}>
+                      {isDone ? '✓' : isError ? '!' : step.id}
+                    </span>
+                    <span style={{
+                      fontSize: 13,
+                      color: isActive ? '#e8e4d8' : isDone ? '#b8c0d0' : '#6a7388',
+                      fontWeight: isActive ? 600 : 400,
+                    }}>
+                      {step.shortName}
+                    </span>
+                    {step.isStream && (
+                      <span style={{
+                        fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                        background: 'rgba(232,93,104,0.15)', color: '#e85d68',
+                        marginLeft: 'auto',
+                      }}>SSE</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+      </aside>
+
+      {/* 右侧执行面板 */}
+      <main style={{ flex: 1, overflowY: 'auto', padding: '32px 40px' }}>
+        {currentMeta && (
+          <>
+            {/* 步骤头部 */}
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                <span style={{
+                  width: 48, height: 48, borderRadius: 14,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 22,
+                  background: currentMeta.colorSoft,
+                  border: `1px solid ${currentMeta.color}30`,
+                  color: currentMeta.color,
+                }}>
+                  {currentMeta.icon}
+                </span>
+                <div>
+                  <div style={{ fontSize: 11, color: currentMeta.color, letterSpacing: 2, fontWeight: 600 }}>
+                    STEP {currentStep} / 20 · {currentMeta.phaseLabel}
+                  </div>
+                  <h1 style={{
+                    fontFamily: '"Noto Serif SC", serif',
+                    fontSize: 28, fontWeight: 700, color: '#e8e4d8',
+                  }}>
+                    {currentMeta.name}
+                  </h1>
+                </div>
+              </div>
+              <p style={{ fontSize: 14, color: '#a8b0c0', maxWidth: 600 }}>
+                {currentMeta.desc}
+              </p>
+            </div>
+
+            {/* 状态条 */}
+            {currentStepState && currentStepState.status !== 'idle' && (
+              <div style={{
+                padding: '12px 20px',
+                borderRadius: 12,
+                marginBottom: 24,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                background: currentStepState.status === 'error'
+                  ? 'rgba(232,93,104,0.1)'
+                  : currentStepState.status === 'success'
+                  ? 'rgba(110,192,146,0.1)'
+                  : 'rgba(212,166,87,0.08)',
+                border: `1px solid ${
+                  currentStepState.status === 'error' ? 'rgba(232,93,104,0.3)'
+                  : currentStepState.status === 'success' ? 'rgba(110,192,146,0.3)'
+                  : 'rgba(212,166,87,0.2)'
+                }`,
+              }}>
+                {currentStepState.status === 'loading' && (
+                  <>
+                    <span style={{
+                      width: 16, height: 16, borderRadius: '50%',
+                      border: '2px solid rgba(212,166,87,0.2)',
+                      borderTopColor: '#f0c674',
+                      animation: 'spin 0.8s linear infinite',
+                    }} />
+                    <span style={{ fontSize: 13, color: '#f0c674' }}>正在生成中...</span>
+                  </>
+                )}
+                {currentStepState.status === 'streaming' && (
+                  <>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: '50%',
+                      background: '#e85d68',
+                      animation: 'dot-blink 1s ease infinite',
+                    }} />
+                    <span style={{ fontSize: 13, color: '#e85d68' }}>流式接收中 · {streamBuffer.length} 字</span>
+                  </>
+                )}
+                {currentStepState.status === 'success' && (
+                  <>
+                    <span style={{ color: '#6ec092', fontSize: 16 }}>✓</span>
+                    <span style={{ fontSize: 13, color: '#6ec092' }}>生成完成</span>
+                  </>
+                )}
+                {currentStepState.status === 'error' && (
+                  <>
+                    <span style={{ color: '#e85d68', fontSize: 16 }}>!</span>
+                    <span style={{ fontSize: 13, color: '#e85d68' }}>{currentStepState.errorMsg || '生成失败'}</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* 变量输入区 */}
+            <VariableInputPanel
+              stepId={currentStep}
+              vars={vars}
+              setVar={setVar}
+              onToggle={() => setShowVars((v) => !v)}
+              show={showVars}
+            />
+
+            {/* 执行按钮 */}
+            <div style={{ display: 'flex', gap: 12, marginBottom: 32 }}>
+              <button
+                onClick={handleExecute}
+                disabled={isLoading}
+                style={{
+                  padding: '12px 32px',
+                  background: isLoading
+                    ? 'var(--ink-surface)'
+                    : `linear-gradient(135deg, ${currentMeta.color}, ${currentMeta.color}dd)`,
+                  color: '#0a0e1a',
+                  border: 'none',
+                  borderRadius: 12,
+                  fontFamily: '"Noto Sans SC", sans-serif',
+                  fontSize: 15,
+                  fontWeight: 700,
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.3s',
+                  opacity: isLoading ? 0.6 : 1,
+                  boxShadow: isLoading ? 'none' : `0 4px 20px ${currentMeta.color}40`,
+                }}
+                onMouseEnter={(e) => {
+                  if (!isLoading) {
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.boxShadow = `0 8px 30px ${currentMeta.color}60`;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isLoading) {
+                    e.currentTarget.style.transform = '';
+                    e.currentTarget.style.boxShadow = `0 4px 20px ${currentMeta.color}40`;
+                  }
+                }}
+              >
+                {isLoading ? '生成中...' : currentMeta.isStream ? '开始流式生成' : '执行 AI 生成'}
+              </button>
+
+              <button
+                onClick={() => setShowVars((v) => !v)}
+                style={{
+                  padding: '12px 20px',
+                  background: 'transparent',
+                  color: '#a8b0c0',
+                  border: '1px solid var(--ink-border)',
+                  borderRadius: 12,
+                  fontFamily: '"Noto Sans SC", sans-serif',
+                  fontSize: 14,
+                  cursor: 'pointer',
+                  transition: 'all 0.3s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = currentMeta.color;
+                  e.currentTarget.style.color = currentMeta.color;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--ink-border)';
+                  e.currentTarget.style.color = '#a8b0c0';
+                }}
+              >
+                {showVars ? '隐藏' : '查看'}变量
+              </button>
+            </div>
+
+            {/* 输出展示区 */}
+            <OutputDisplay
+              stepMeta={currentMeta}
+              content={currentStepState?.status === 'streaming' ? streamBuffer : outputContent}
+              isStreaming={currentStepState?.status === 'streaming'}
+              isLoading={isLoading && !currentStepState?.status?.includes('stream')}
+            />
+
+            {/* 导航按钮 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 40, paddingTop: 24, borderTop: '1px solid var(--ink-border)' }}>
+              <button
+                onClick={handlePrev}
+                disabled={currentStep === 1}
+                style={{
+                  padding: '10px 24px',
+                  background: 'var(--ink-card)',
+                  color: currentStep === 1 ? '#4a5366' : '#b8c0d0',
+                  border: '1px solid var(--ink-border)',
+                  borderRadius: 10,
+                  fontSize: 14,
+                  cursor: currentStep === 1 ? 'not-allowed' : 'pointer',
+                  opacity: currentStep === 1 ? 0.5 : 1,
+                  transition: 'all 0.3s',
+                }}
+              >
+                ← 上一步
+              </button>
+              <button
+                onClick={handleNext}
+                disabled={currentStep === 20}
+                style={{
+                  padding: '10px 24px',
+                  background: currentStep === 20 ? 'var(--ink-card)' : 'var(--ink-card)',
+                  color: currentStep === 20 ? '#4a5366' : '#f0c674',
+                  border: `1px solid ${currentStep === 20 ? 'var(--ink-border)' : 'rgba(212,166,87,0.3)'}`,
+                  borderRadius: 10,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: currentStep === 20 ? 'not-allowed' : 'pointer',
+                  opacity: currentStep === 20 ? 0.5 : 1,
+                  transition: 'all 0.3s',
+                }}
+              >
+                下一步 →
+              </button>
+            </div>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+// ---- 变量输入面板 ----
+function VariableInputPanel({
+  stepId,
+  vars,
+  setVar,
+  onToggle,
+  show,
+}: {
+  stepId: number;
+  vars: ReturnType<typeof useNovelGenesisStore.getState>['vars'];
+  setVar: ReturnType<typeof useNovelGenesisStore.getState>['setVar'];
+  onToggle: () => void;
+  show: boolean;
+}) {
+  const meta = getStepMeta(stepId);
+  if (!meta) return null;
+
+  // 根据步骤决定显示哪些变量输入
+  const varFields: Array<{ key: keyof typeof vars; label: string; type: 'text' | 'textarea' | 'tags' }> = [];
+
+  if (stepId <= 3) {
+    varFields.push({ key: 'idea', label: '核心创意', type: 'textarea' });
+    varFields.push({ key: 'tags', label: '标签', type: 'tags' });
+  }
+  if (stepId >= 4 && stepId <= 7) {
+    varFields.push({ key: 'idea', label: '创意', type: 'text' });
+    varFields.push({ key: 'tags', label: '标签', type: 'tags' });
+    if (stepId >= 5) varFields.push({ key: 'world', label: '时代背景', type: 'textarea' });
+    if (stepId >= 6) varFields.push({ key: 'geography', label: '地理环境', type: 'textarea' });
+    if (stepId >= 7) varFields.push({ key: 'rules', label: '核心法则', type: 'textarea' });
+  }
+  if (stepId >= 8 && stepId <= 9) {
+    varFields.push({ key: 'tags', label: '标签', type: 'tags' });
+    varFields.push({ key: 'worldContext', label: '时代背景', type: 'textarea' });
+    varFields.push({ key: 'geography', label: '地理环境', type: 'textarea' });
+    varFields.push({ key: 'rules', label: '核心法则', type: 'textarea' });
+    if (stepId === 9) {
+      varFields.push({ key: 'characters', label: '已存在角色', type: 'textarea' });
+      varFields.push({ key: 'amount', label: '生成数量', type: 'text' });
+    }
+  }
+  if (stepId >= 10 && stepId <= 13) {
+    varFields.push({ key: 'tags', label: '标签', type: 'tags' });
+    varFields.push({ key: 'world', label: '时代背景', type: 'textarea' });
+    if (stepId >= 10) varFields.push({ key: 'rules', label: '核心法则', type: 'textarea' });
+    if (stepId >= 10) varFields.push({ key: 'characters', label: '角色表', type: 'textarea' });
+    if (stepId >= 10) varFields.push({ key: 'coreCharacters', label: '核心角色', type: 'textarea' });
+    if (stepId >= 11) varFields.push({ key: 'currentContent', label: '当前主线大纲', type: 'textarea' });
+    if (stepId >= 12) varFields.push({ key: 'mainPlot', label: '主线脉络', type: 'textarea' });
+    if (stepId >= 12) varFields.push({ key: 'geography', label: '地理+势力', type: 'textarea' });
+  }
+  if (stepId === 14) {
+    varFields.push({ key: 'style', label: '行文风格', type: 'text' });
+    varFields.push({ key: 'tone', label: '情感基调', type: 'text' });
+  }
+  if (stepId === 15) {
+    varFields.push({ key: 'tags', label: '标签', type: 'tags' });
+    varFields.push({ key: 'world', label: '世界观', type: 'textarea' });
+    varFields.push({ key: 'rules', label: '核心法则', type: 'textarea' });
+    varFields.push({ key: 'style', label: '文笔', type: 'text' });
+    varFields.push({ key: 'tone', label: '文风', type: 'text' });
+    varFields.push({ key: 'characters', label: '主要角色', type: 'textarea' });
+    varFields.push({ key: 'mainPlot', label: '主线脉络', type: 'textarea' });
+    varFields.push({ key: 'detailedPlot', label: '详细大纲', type: 'textarea' });
+    varFields.push({ key: 'beats', label: '剧情节点', type: 'textarea' });
+    varFields.push({ key: 'amount', label: '章节数量', type: 'text' });
+  }
+  if (stepId === 16 || stepId === 17) {
+    varFields.push({ key: 'idea', label: '创意', type: 'text' });
+    varFields.push({ key: 'world', label: '世界观', type: 'textarea' });
+    varFields.push({ key: 'characters', label: '角色', type: 'textarea' });
+    varFields.push({ key: 'style', label: '文笔', type: 'text' });
+    varFields.push({ key: 'tone', label: '文风', type: 'text' });
+    varFields.push({ key: 'authorMimic', label: '模仿作者', type: 'text' });
+    varFields.push({ key: 'chapterOrder', label: '章节序号', type: 'text' });
+    varFields.push({ key: 'chapterTitle', label: '章节标题', type: 'text' });
+    varFields.push({ key: 'chapterSummary', label: '本章大纲', type: 'textarea' });
+    varFields.push({ key: 'prevSummary', label: '前情提要', type: 'textarea' });
+    if (stepId === 16) {
+      varFields.push({ key: 'lastChapterContent', label: '上章结尾', type: 'textarea' });
+      varFields.push({ key: 'geography', label: '地理+势力', type: 'textarea' });
+      varFields.push({ key: 'rules', label: '核心法则', type: 'textarea' });
+    }
+    if (stepId === 17) {
+      varFields.push({ key: 'mainPlot', label: '主线脉络', type: 'textarea' });
+      varFields.push({ key: 'detailedPlot', label: '详细大纲', type: 'textarea' });
+      varFields.push({ key: 'beats', label: '剧情节点', type: 'textarea' });
+    }
+  }
+  if (stepId === 18) {
+    varFields.push({ key: 'tags', label: '标签', type: 'tags' });
+    varFields.push({ key: 'world', label: '世界观', type: 'textarea' });
+    varFields.push({ key: 'characters', label: '角色', type: 'textarea' });
+    varFields.push({ key: 'fullContext', label: '全文', type: 'textarea' });
+    varFields.push({ key: 'chapterSummary', label: '本章大纲', type: 'textarea' });
+    varFields.push({ key: 'fullContext', label: '待校对正文', type: 'textarea' });
+  }
+  if (stepId === 19) {
+    varFields.push({ key: 'chapterSummary', label: '本章大纲', type: 'textarea' });
+    varFields.push({ key: 'characters', label: '角色表', type: 'textarea' });
+    varFields.push({ key: 'style', label: '文笔', type: 'text' });
+    varFields.push({ key: 'tone', label: '文风', type: 'text' });
+    varFields.push({ key: 'content', label: '待润色正文', type: 'textarea' });
+  }
+  if (stepId === 20) {
+    varFields.push({ key: 'characters', label: '角色列表', type: 'textarea' });
+    varFields.push({ key: 'chapterSummary', label: '本章大纲', type: 'textarea' });
+    varFields.push({ key: 'content', label: '本章正文', type: 'textarea' });
+  }
+
+  if (varFields.length === 0) return null;
+
+  return (
+    <div style={{
+      marginBottom: 24,
+      background: 'var(--ink-card)',
+      border: '1px solid var(--ink-border)',
+      borderRadius: 16,
+      overflow: 'hidden',
+    }}>
+      <button
+        onClick={onToggle}
+        style={{
+          width: '100%',
+          padding: '14px 20px',
+          background: 'transparent',
+          border: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          cursor: 'pointer',
+          color: '#b8c0d0',
+          fontSize: 14,
+          fontWeight: 600,
+        }}
+      >
+        <span>输入变量 ({varFields.length})</span>
+        <span style={{ fontSize: 12, color: '#6a7388' }}>{show ? '收起 ▲' : '展开 ▼'}</span>
+      </button>
+
+      {show && (
+        <div style={{ padding: '0 20px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+          {varFields.map((field) => (
+            <div key={String(field.key)}>
+              <label style={{ display: 'block', fontSize: 12, color: '#8a93a8', marginBottom: 6, fontWeight: 500 }}>
+                {field.label} <code style={{ fontSize: 10, color: '#4a5366' }}>{`{{${String(field.key)}}}`}</code>
+              </label>
+              {field.type === 'text' && (
+                <input
+                  type="text"
+                  value={vars[field.key] as string}
+                  onChange={(e) => setVar(field.key, e.target.value as never)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    background: 'var(--ink-surface)',
+                    border: '1px solid var(--ink-border)',
+                    borderRadius: 8,
+                    color: '#e8e4d8',
+                    fontSize: 13,
+                    fontFamily: '"Noto Sans SC", sans-serif',
+                    outline: 'none',
+                    transition: 'border-color 0.2s',
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = meta.color)}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--ink-border)')}
+                />
+              )}
+              {field.type === 'textarea' && (
+                <textarea
+                  value={vars[field.key] as string}
+                  onChange={(e) => setVar(field.key, e.target.value as never)}
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    background: 'var(--ink-surface)',
+                    border: '1px solid var(--ink-border)',
+                    borderRadius: 8,
+                    color: '#e8e4d8',
+                    fontSize: 13,
+                    fontFamily: '"Noto Sans SC", sans-serif',
+                    outline: 'none',
+                    resize: 'vertical',
+                    transition: 'border-color 0.2s',
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = meta.color)}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--ink-border)')}
+                />
+              )}
+              {field.type === 'tags' && (
+                <input
+                  type="text"
+                  value={Array.isArray(vars[field.key]) ? (vars[field.key] as string[]).join('、') : ''}
+                  onChange={(e) => setVar(field.key, e.target.value.split('、').filter(Boolean) as never)}
+                  placeholder="用顿号分隔"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    background: 'var(--ink-surface)',
+                    border: '1px solid var(--ink-border)',
+                    borderRadius: 8,
+                    color: '#e8e4d8',
+                    fontSize: 13,
+                    fontFamily: '"Noto Sans SC", sans-serif',
+                    outline: 'none',
+                    transition: 'border-color 0.2s',
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = meta.color)}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--ink-border)')}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- 输出展示区 ----
+function OutputDisplay({
+  stepMeta,
+  content,
+  isStreaming,
+  isLoading,
+}: {
+  stepMeta: StepMeta;
+  content: string;
+  isStreaming: boolean;
+  isLoading: boolean;
+}) {
+  // 加载中骨架屏
+  if (isLoading && !content) {
+    return (
+      <div style={{
+        background: 'var(--ink-card)',
+        border: '1px solid var(--ink-border)',
+        borderRadius: 16,
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          padding: '12px 20px',
+          borderBottom: '1px solid var(--ink-border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+        }}>
+          <span style={{
+            width: 14, height: 14, borderRadius: '50%',
+            border: '2px solid rgba(212,166,87,0.15)',
+            borderTopColor: stepMeta.color,
+            animation: 'spin 0.8s linear infinite',
+          }} />
+          <span style={{ fontSize: 12, color: stepMeta.color, fontWeight: 600 }}>
+            AI 正在生成中...
+          </span>
+        </div>
+        <div style={{ padding: 20 }}>
+            {[0.85, 0.7, 0.9, 0.6, 0.75, 0.5].map((w, i) => (
+              <div
+                key={i}
+                style={{
+                  height: 14,
+                  width: `${w * 100}%`,
+                  borderRadius: 4,
+                  marginBottom: 12,
+                  background: 'var(--ink-surface)',
+                  animation: `skeleton-breath 1.8s ease-in-out infinite ${i * 0.15}s`,
+                }}
+              />
+            ))}
+        </div>
+      </div>
+    );
+  }
+
+  // 空状态
+  if (!content) {
+    return (
+      <div style={{
+        padding: '56px 32px',
+        textAlign: 'center',
+        background: 'var(--ink-card)',
+        border: '1px dashed var(--ink-border)',
+        borderRadius: 16,
+        position: 'relative',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          fontSize: 40,
+          marginBottom: 16,
+          opacity: 0.2,
+          animation: 'pulse-soft 2.5s ease-in-out infinite',
+        }}>
+          {stepMeta.icon}
+        </div>
+        <div style={{ fontSize: 14, color: '#6a7388', marginBottom: 8 }}>
+          点击「{stepMeta.isStream ? '开始流式生成' : '执行 AI 生成'}」后，输出将显示在此处
+        </div>
+        <div style={{ fontSize: 11, color: '#4a5366' }}>
+          {stepMeta.outputType === 'json' ? '结构化 JSON 输出' : stepMeta.isStream ? '流式实时输出' : 'Markdown 文本输出'}
+        </div>
+      </div>
+    );
+  }
+
+  // JSON 输出：尝试格式化，失败时展示错误提示 + 重试按钮
+  const isJson = stepMeta.outputType === 'json';
+  let displayContent = content;
+  let jsonParseError = false;
+  if (isJson && !isStreaming) {
+    try {
+      displayContent = JSON.stringify(JSON.parse(content), null, 2);
+    } catch {
+      jsonParseError = true;
+      // 如果不是合法 JSON，保持原样
+    }
+  }
+
+  return (
+    <div style={{
+      background: 'var(--ink-card)',
+      border: '1px solid var(--ink-border)',
+      borderRadius: 16,
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        padding: '12px 20px',
+        borderBottom: '1px solid var(--ink-border)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}>
+        <span style={{ fontSize: 12, color: '#8a93a8', fontWeight: 600 }}>
+          {isStreaming ? '实时输出' : '生成结果'}
+        </span>
+        <span style={{ fontSize: 11, color: '#4a5366' }}>
+          {content.length} 字 · {stepMeta.outputType.toUpperCase()}
+        </span>
+      </div>
+      <div style={{
+        padding: 20,
+        maxHeight: 500,
+        overflowY: 'auto',
+      }}>
+        {jsonParseError && (
+          <div style={{
+            padding: '10px 14px',
+            marginBottom: 12,
+            borderRadius: 8,
+            background: 'rgba(232,93,104,0.1)',
+            border: '1px solid rgba(232,93,104,0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}>
+            <span style={{ fontSize: 13, color: '#e85d68' }}>
+              AI 返回格式异常（不是合法 JSON），可能影响后续步骤
+            </span>
+            <button
+              onClick={() => window.location.reload()}
+              style={{
+                padding: '6px 14px',
+                background: 'rgba(232,93,104,0.15)',
+                color: '#e85d68',
+                border: 'none',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              刷新重试
+            </button>
+          </div>
+        )}
+        <pre style={{
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          fontFamily: isJson ? '"JetBrains Mono", "Consolas", monospace' : '"Noto Serif SC", serif',
+          fontSize: 14,
+          lineHeight: 1.8,
+          color: '#d8d4c8',
+          margin: 0,
+        }}>
+          {displayContent}
+          {isStreaming && (
+            <span style={{
+              display: 'inline-block',
+              width: 8,
+              height: 16,
+              background: stepMeta.color,
+              marginLeft: 2,
+              animation: 'blink-caret 0.8s ease infinite',
+              verticalAlign: 'text-bottom',
+            }} />
+          )}
+        </pre>
+      </div>
+    </div>
+  );
+}

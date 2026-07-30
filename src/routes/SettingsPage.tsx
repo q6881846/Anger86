@@ -1,0 +1,660 @@
+// ============================================
+// API 设置页面 — LLM 供应商配置管理
+// ============================================
+import { useState } from 'react';
+import { useApiStore } from '@/lib/store/apiStore';
+import type { ApiProvider, ApiConfig, ModuleName } from '@/lib/types';
+import { useReveal } from '@/components/hooks';
+
+const PROVIDERS: { id: ApiProvider; label: string; defaultBaseUrl: string }[] = [
+  { id: 'openai', label: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1' },
+  { id: 'baidu-qianfan', label: '百度千帆', defaultBaseUrl: 'https://qianfan.baidubce.com/v2' },
+  { id: 'anthropic', label: 'Anthropic (Claude)', defaultBaseUrl: 'https://api.anthropic.com/v1' },
+  { id: 'longcat', label: 'LongCat AI', defaultBaseUrl: 'https://api.longcat.chat/openai' },
+  { id: 'custom', label: '自定义', defaultBaseUrl: '' },
+];
+
+// 仅列出「实际接入生成流程、可按模块分配 API」的模块。
+// 以下 9 个属于规划中但未接入生成流程的占位模块，分配了也不会生效，故不在分配 UI 中展示：
+//   hitPositioning(爽点定位)、titleGen(书名生成)、characterTool(角色工具)、
+//   extractCharacters(提取角色)、hitDensityCalibration(爽点密度)、volumeSnapshot(分卷快照)、
+//   logicReview(逻辑审查)、chapterFix(章节修复)、hookCheck(钩子检查)
+const MODULES: { key: ModuleName; label: string }[] = [
+  { key: 'inspiration', label: '灵感搅拌' },
+  { key: 'ruleService', label: '核心法则' },
+  { key: 'worldview', label: '世界观' },
+  { key: 'coreCharacters', label: '核心角色' },
+  { key: 'supportingCharacters', label: '配角' },
+  { key: 'mainPlot', label: '主线剧情' },
+  { key: 'chapterOutline', label: '章节大纲' },
+  { key: 'writing', label: '正文写作' },
+  { key: 'textOptimize', label: '文本优化' },
+  { key: 'chapterReview', label: '章节审查' },
+  { key: 'stateSync', label: '状态同步' },
+];
+
+function genId() {
+  return `api-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export default function SettingsPage() {
+  useReveal();
+  const { configs, addConfig, updateConfig, removeConfig } = useApiStore();
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editConfig, setEditConfig] = useState<Partial<ApiConfig>>({});
+  const [showForm, setShowForm] = useState(false);
+  const [newConfig, setNewConfig] = useState<Partial<ApiConfig>>({
+    provider: 'openai',
+    temperature: 0.7,
+    maxTokens: 4096,
+    enabled: true,
+    assignedModules: [],
+  });
+
+  const startEdit = (config: ApiConfig) => {
+    setEditingId(config.id);
+    setEditConfig({ ...config });
+  };
+
+  const saveEdit = () => {
+    if (!editingId || !editConfig.name) return;
+    updateConfig(editingId, editConfig as ApiConfig);
+    setEditingId(null);
+  };
+
+  const addNew = () => {
+    if (!newConfig.name || !newConfig.apiKey) return;
+    const provider = PROVIDERS.find((p) => p.id === newConfig.provider);
+    const cfg: ApiConfig = {
+      id: genId(),
+      name: newConfig.name,
+      provider: (newConfig.provider as ApiProvider) || 'openai',
+      baseUrl: newConfig.baseUrl || provider?.defaultBaseUrl || '',
+      apiKey: newConfig.apiKey || '',
+      model: newConfig.model || 'gpt-4o',
+      temperature: newConfig.temperature ?? 0.7,
+      maxTokens: newConfig.maxTokens ?? 4096,
+      assignedModules: newConfig.assignedModules || [],
+      enabled: true,
+    };
+    addConfig(cfg);
+    setShowForm(false);
+    setNewConfig({ provider: 'openai', temperature: 0.7, maxTokens: 4096, enabled: true, assignedModules: [] });
+  };
+
+  const toggleModule = (configId: string, module: ModuleName, isAssigned: boolean) => {
+    const config = configs.find((c) => c.id === configId);
+    if (!config) return;
+    const next = isAssigned
+      ? config.assignedModules.filter((m) => m !== module)
+      : [...config.assignedModules, module];
+    updateConfig(configId, { assignedModules: next });
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '10px 12px',
+    border: '1px solid var(--ink-border)',
+    borderRadius: 8,
+    fontSize: 13,
+    color: '#e8e4d8',
+    background: 'var(--ink-surface)',
+    outline: 'none',
+    transition: 'border-color 0.2s, box-shadow 0.2s',
+    fontFamily: '"Noto Sans SC", sans-serif',
+  };
+
+  const focusHandler = (e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) => {
+    e.currentTarget.style.borderColor = 'rgba(212,166,87,0.4)';
+    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(212,166,87,0.08)';
+  };
+  const blurHandler = (e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) => {
+    e.currentTarget.style.borderColor = 'var(--ink-border)';
+    e.currentTarget.style.boxShadow = 'none';
+  };
+
+  const providerColors: Record<ApiProvider, string> = {
+    openai: '#10a37f',
+    'baidu-qianfan': '#2468f2',
+    anthropic: '#d97757',
+    longcat: '#f0c674',
+    custom: '#8a93a8',
+  };
+
+  return (
+    <div style={{ background: 'var(--ink-deep)', minHeight: '100vh', paddingTop: 80 }}>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 24px 80px' }}>
+        {/* Header */}
+        <div
+          className="reveal"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 36,
+          }}
+        >
+          <div>
+            <h1
+              style={{
+                fontSize: 28,
+                fontWeight: 700,
+                color: '#f0c674',
+                fontFamily: '"Noto Serif SC", serif',
+                marginBottom: 8,
+              }}
+            >
+              API 设置
+            </h1>
+            <p style={{ fontSize: 14, color: '#6a7388' }}>
+              配置 LLM 接口供应商，支持多模型混合调用
+            </p>
+          </div>
+          <button
+            onClick={() => setShowForm(!showForm)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '12px 24px',
+              background: showForm ? 'var(--ink-surface)' : 'linear-gradient(135deg, #d4a657, #f0c674)',
+              color: showForm ? '#f0c674' : '#0a0e1a',
+              border: showForm ? '1px solid rgba(212,166,87,0.3)' : 'none',
+              borderRadius: 10,
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: 'pointer',
+              boxShadow: showForm ? 'none' : '0 4px 20px rgba(212,166,87,0.3)',
+              transition: 'all 0.3s cubic-bezier(0.22,1,0.36,1)',
+            }}
+          >
+            <span style={{ fontSize: 18 }}>{showForm ? '\u2715' : '+'}</span>
+            <span>{showForm ? '取消' : '添加配置'}</span>
+          </button>
+        </div>
+
+        {/* Add Form */}
+        {showForm && (
+          <div
+            className="reveal"
+            style={{
+              background: 'var(--ink-card)',
+              border: '1px solid var(--ink-border)',
+              borderRadius: 16,
+              padding: '24px',
+              marginBottom: 24,
+              boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+            }}
+          >
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#e8e4d8', marginBottom: 20 }}>
+              新建 API 配置
+            </h3>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                gap: 16,
+                marginBottom: 20,
+              }}
+            >
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#8a93a8', marginBottom: 6 }}>
+                  名称
+                </label>
+                <input
+                  type="text"
+                  value={newConfig.name || ''}
+                  onChange={(e) => setNewConfig({ ...newConfig, name: e.target.value })}
+                  placeholder="如：主力·GPT-4"
+                  style={inputStyle}
+                  onFocus={focusHandler}
+                  onBlur={blurHandler}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#8a93a8', marginBottom: 6 }}>
+                  供应商
+                </label>
+                <select
+                  value={newConfig.provider}
+                  onChange={(e) => {
+                    const p = e.target.value as ApiProvider;
+                    const def = PROVIDERS.find((x) => x.id === p);
+                    setNewConfig({
+                      ...newConfig,
+                      provider: p,
+                      baseUrl: def?.defaultBaseUrl || '',
+                    });
+                  }}
+                  style={inputStyle}
+                  onFocus={focusHandler}
+                  onBlur={blurHandler}
+                >
+                  {PROVIDERS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#8a93a8', marginBottom: 6 }}>
+                  Base URL
+                </label>
+                <input
+                  type="text"
+                  value={newConfig.baseUrl || ''}
+                  onChange={(e) => setNewConfig({ ...newConfig, baseUrl: e.target.value })}
+                  placeholder="https://..."
+                  style={inputStyle}
+                  onFocus={focusHandler}
+                  onBlur={blurHandler}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#8a93a8', marginBottom: 6 }}>
+                  API Key
+                </label>
+                <input
+                  type="password"
+                  value={newConfig.apiKey || ''}
+                  onChange={(e) => setNewConfig({ ...newConfig, apiKey: e.target.value })}
+                  placeholder="sk-..."
+                  style={inputStyle}
+                  onFocus={focusHandler}
+                  onBlur={blurHandler}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#8a93a8', marginBottom: 6 }}>
+                  模型
+                </label>
+                <input
+                  type="text"
+                  value={newConfig.model || ''}
+                  onChange={(e) => setNewConfig({ ...newConfig, model: e.target.value })}
+                  placeholder="gpt-4o"
+                  style={inputStyle}
+                  onFocus={focusHandler}
+                  onBlur={blurHandler}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#8a93a8', marginBottom: 6 }}>
+                  Temperature
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={newConfig.temperature ?? 0.7}
+                  onChange={(e) => setNewConfig({ ...newConfig, temperature: parseFloat(e.target.value) })}
+                  style={inputStyle}
+                  onFocus={focusHandler}
+                  onBlur={blurHandler}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#8a93a8', marginBottom: 6 }}>
+                  Max Tokens (0=无限制)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={128000}
+                  step={100}
+                  value={newConfig.maxTokens ?? 4096}
+                  onChange={(e) => setNewConfig({ ...newConfig, maxTokens: parseInt(e.target.value, 10) })}
+                  style={inputStyle}
+                  onFocus={focusHandler}
+                  onBlur={blurHandler}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                onClick={() => setShowForm(false)}
+                style={{
+                  padding: '8px 20px',
+                  border: '1px solid var(--ink-border)',
+                  borderRadius: 8,
+                  background: 'var(--ink-surface)',
+                  color: '#8a93a8',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={addNew}
+                disabled={!newConfig.name || !newConfig.apiKey}
+                style={{
+                  padding: '8px 20px',
+                  background: !newConfig.name || !newConfig.apiKey ? '#2a3650' : 'linear-gradient(135deg, #d4a657, #f0c674)',
+                  color: !newConfig.name || !newConfig.apiKey ? '#6a7388' : '#0a0e1a',
+                  border: 'none',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: !newConfig.name || !newConfig.apiKey ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {'\u2713'} 保存配置
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Config Cards */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {configs.map((config) => {
+            const isEditing = editingId === config.id;
+            const color = providerColors[config.provider];
+
+            return (
+              <div
+                key={config.id}
+                className="reveal"
+                style={{
+                  background: 'var(--ink-card)',
+                  border: isEditing ? '1px solid rgba(212,166,87,0.4)' : '1px solid var(--ink-border)',
+                  borderRadius: 16,
+                  overflow: 'hidden',
+                  boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+                  transition: 'all 0.3s',
+                }}
+              >
+                {/* Card Header */}
+                <div
+                  style={{
+                    padding: '20px 24px',
+                    borderBottom: '1px solid var(--ink-border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 10,
+                        background: `${color}15`,
+                        border: `1px solid ${color}30`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 18,
+                        color,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {'\u2699'}
+                    </div>
+                    <div>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={(editConfig.name as string) || ''}
+                          onChange={(e) => setEditConfig({ ...editConfig, name: e.target.value })}
+                          style={{
+                            ...inputStyle,
+                            width: 200,
+                            padding: '6px 10px',
+                            fontSize: 15,
+                            fontWeight: 700,
+                          }}
+                          autoFocus
+                        />
+                      ) : (
+                        <h3 style={{ fontSize: 16, fontWeight: 700, color: '#e8e4d8', marginBottom: 2 }}>
+                          {config.name}
+                        </h3>
+                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color,
+                            fontWeight: 600,
+                            background: `${color}10`,
+                            padding: '2px 8px',
+                            borderRadius: 4,
+                          }}
+                        >
+                          {PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider}
+                        </span>
+                        <span style={{ fontSize: 12, color: '#6a7388' }}>{config.model}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {/* Enable toggle */}
+                    <button
+                      onClick={() => updateConfig(config.id, { enabled: !config.enabled })}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 6,
+                        border: config.enabled ? '1px solid rgba(110,192,146,0.3)' : '1px solid var(--ink-border)',
+                        background: config.enabled ? 'rgba(110,192,146,0.1)' : 'var(--ink-surface)',
+                        color: config.enabled ? '#6ec092' : '#6a7388',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                      }}
+                    >
+                      {config.enabled ? '\u2713 启用' : '\u2715 禁用'}
+                    </button>
+
+                    {isEditing ? (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={saveEdit}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: 6,
+                            border: '1px solid rgba(110,192,146,0.3)',
+                            background: 'rgba(110,192,146,0.1)',
+                            color: '#6ec092',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {'\u2713'} 保存
+                        </button>
+                        <button
+                          onClick={() => setEditingId(null)}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: 6,
+                            border: '1px solid var(--ink-border)',
+                            background: 'var(--ink-surface)',
+                            color: '#8a93a8',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => startEdit(config)}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: 6,
+                            border: '1px solid var(--ink-border)',
+                            background: 'transparent',
+                            color: '#8a93a8',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = '#d4a657';
+                            e.currentTarget.style.borderColor = 'rgba(212,166,87,0.3)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = '#8a93a8';
+                            e.currentTarget.style.borderColor = 'var(--ink-border)'; e.currentTarget.style.boxShadow='none';
+                          }}
+                        >
+                          {'\u270E'} 编辑
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm(`确定删除「${config.name}」?`)) removeConfig(config.id);
+                          }}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: 6,
+                            border: '1px solid var(--ink-border)',
+                            background: 'transparent',
+                            color: '#6a7388',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = '#e85d68';
+                            e.currentTarget.style.borderColor = 'rgba(232,93,104,0.3)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = '#6a7388';
+                            e.currentTarget.style.borderColor = 'var(--ink-border)'; e.currentTarget.style.boxShadow='none';
+                          }}
+                        >
+                          {'\u{1F5D1}'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Edit Fields */}
+                {isEditing && (
+                  <div
+                    style={{
+                      padding: '20px 24px',
+                      borderBottom: '1px solid var(--ink-border)',
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                      gap: 16,
+                    }}
+                  >
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, color: '#6a7388', marginBottom: 4 }}>Base URL</label>
+                      <input
+                        type="text"
+                        value={editConfig.baseUrl || ''}
+                        onChange={(e) => setEditConfig({ ...editConfig, baseUrl: e.target.value })}
+                        style={{ ...inputStyle, padding: '8px 10px', fontSize: 12 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, color: '#6a7388', marginBottom: 4 }}>API Key</label>
+                      <input
+                        type="password"
+                        value={editConfig.apiKey || ''}
+                        onChange={(e) => setEditConfig({ ...editConfig, apiKey: e.target.value })}
+                        style={{ ...inputStyle, padding: '8px 10px', fontSize: 12 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, color: '#6a7388', marginBottom: 4 }}>模型</label>
+                      <input
+                        type="text"
+                        value={editConfig.model || ''}
+                        onChange={(e) => setEditConfig({ ...editConfig, model: e.target.value })}
+                        style={{ ...inputStyle, padding: '8px 10px', fontSize: 12 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, color: '#6a7388', marginBottom: 4 }}>Temperature</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        value={editConfig.temperature ?? 0.7}
+                        onChange={(e) => setEditConfig({ ...editConfig, temperature: parseFloat(e.target.value) })}
+                        style={{ ...inputStyle, padding: '8px 10px', fontSize: 12 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, color: '#6a7388', marginBottom: 4 }}>Max Tokens (0=无限制)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={128000}
+                        step={100}
+                        value={editConfig.maxTokens ?? 4096}
+                        onChange={(e) => setEditConfig({ ...editConfig, maxTokens: parseInt(e.target.value, 10) })}
+                        style={{ ...inputStyle, padding: '8px 10px', fontSize: 12 }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Module Assignment */}
+                <div style={{ padding: '16px 24px' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#8a93a8', marginBottom: 10 }}>
+                    {'\u2699'} 分配模块
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {MODULES.map((mod) => {
+                      const assigned = config.assignedModules.includes(mod.key);
+                      return (
+                        <button
+                          key={mod.key}
+                          onClick={() => toggleModule(config.id, mod.key, assigned)}
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: 16,
+                            border: assigned ? '1px solid rgba(212,166,87,0.4)' : '1px solid var(--ink-border)',
+                            background: assigned ? 'rgba(212,166,87,0.1)' : 'var(--ink-surface)',
+                            color: assigned ? '#f0c674' : '#6a7388',
+                            fontSize: 11,
+                            fontWeight: 500,
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            userSelect: 'none',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!assigned) {
+                              e.currentTarget.style.borderColor = 'rgba(212,166,87,0.25)';
+                              e.currentTarget.style.color = '#d4a657';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!assigned) {
+                              e.currentTarget.style.borderColor = 'var(--ink-border)';
+                              e.currentTarget.style.color = '#6a7388'; e.currentTarget.style.boxShadow='none';
+                            }
+                          }}
+                        >
+                          {assigned ? '\u2713 ' : ''}
+                          {mod.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}

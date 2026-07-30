@@ -1,0 +1,515 @@
+// ============================================
+// 书架页面 — 作品管理
+// ============================================
+import { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useProjectStore } from '@/lib/store';
+import { useUIStore } from '@/lib/store';
+import { useReveal } from '@/components/hooks';
+
+function formatDate(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) {
+    const hours = Math.floor(diff / 3600000);
+    if (hours === 0) {
+      const mins = Math.floor(diff / 60000);
+      return mins <= 1 ? '刚刚' : `${mins}分钟前`;
+    }
+    return `${hours}小时前`;
+  }
+  if (days === 1) return '昨天';
+  if (days < 7) return `${days}天前`;
+  if (days < 30) return `${Math.floor(days / 7)}周前`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export default function ShelfPage() {
+  useReveal();
+  const navigate = useNavigate();
+  const showToast = useUIStore((s) => s.showToast);
+
+  const {
+    books,
+    currentBookId,
+    createBook,
+    switchBook,
+    deleteBook,
+    renameBook,
+  } = useProjectStore();
+
+  const bookList = Object.values(books).sort((a, b) => b.updatedAt - a.updatedAt);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  const handleCreate = () => {
+    const id = createBook(`新书 ${bookList.length + 1}`);
+    showToast('新书已创建');
+    navigate('/inspiration');
+  };
+
+  const handleSwitch = (bookId: string) => {
+    const ok = switchBook(bookId);
+    if (ok) {
+      showToast('已切换书本');
+      navigate('/inspiration');
+    }
+  };
+
+  const startRename = (book: typeof bookList[0]) => {
+    setEditingId(book.id);
+    setEditTitle(book.title || '未命名');
+  };
+
+  const confirmRename = (bookId: string) => {
+    if (editTitle.trim()) {
+      renameBook(bookId, editTitle.trim());
+      showToast('重命名成功');
+    }
+    setEditingId(null);
+  };
+
+  const handleDelete = (bookId: string) => {
+    deleteBook(bookId);
+    showToast('已删除');
+    setDeleteConfirmId(null);
+  };
+
+  return (
+    <div style={{ background: 'var(--ink-deep)', minHeight: '100vh', paddingTop: 80 }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 24px 80px' }}>
+        {/* Header */}
+        <div
+          className="reveal"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 36,
+          }}
+        >
+          <div>
+            <h1
+              style={{
+                fontSize: 28,
+                fontWeight: 700,
+                color: '#f0c674',
+                fontFamily: '"Noto Serif SC", serif',
+                marginBottom: 8,
+              }}
+            >
+              我的书架
+            </h1>
+            <p style={{ fontSize: 14, color: '#6a7388' }}>
+              共 {bookList.length} 部作品
+            </p>
+          </div>
+          <button
+            onClick={handleCreate}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '12px 24px',
+              background: 'linear-gradient(135deg, #d4a657, #f0c674)',
+              color: '#0a0e1a',
+              border: 'none',
+              borderRadius: 10,
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: 'pointer',
+              boxShadow: '0 4px 20px rgba(212,166,87,0.3)',
+              transition: 'all 0.3s cubic-bezier(0.22,1,0.36,1)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.03)';
+              e.currentTarget.style.boxShadow = '0 8px 32px rgba(212,166,87,0.45)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+              e.currentTarget.style.boxShadow = '0 4px 20px rgba(212,166,87,0.3)';
+            }}
+          >
+            <span style={{ fontSize: 18 }}>+</span>
+            <span>新建作品</span>
+          </button>
+        </div>
+
+        {/* Book Grid */}
+        {bookList.length === 0 ? (
+          <div
+            className="reveal"
+            style={{
+              textAlign: 'center',
+              padding: '80px 24px',
+              border: '2px dashed var(--ink-border-bright)',
+              borderRadius: 16,
+              color: '#6a7388',
+            }}
+          >
+            <div
+              style={{
+                width: 64,
+                height: 64,
+                margin: '0 auto 20px',
+                borderRadius: '50%',
+                background: 'rgba(212,166,87,0.08)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 28,
+                color: '#d4a657',
+              }}
+            >
+              {'\u{1F4DA}'}
+            </div>
+            <p style={{ fontSize: 16, fontWeight: 600, color: '#8a93a8', marginBottom: 8 }}>
+              书架空空如也
+            </p>
+            <p style={{ fontSize: 14, color: '#6a7388', marginBottom: 20 }}>
+              点击上方按钮创建你的第一部作品
+            </p>
+            <button
+              onClick={handleCreate}
+              style={{
+                padding: '10px 24px',
+                background: 'rgba(212,166,87,0.1)',
+                border: '1px solid rgba(212,166,87,0.3)',
+                borderRadius: 8,
+                color: '#f0c674',
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              + 立即创建
+            </button>
+          </div>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gap: 20,
+            }}
+          >
+            {bookList.map((book, index) => {
+              const isCurrent = book.id === currentBookId;
+              const chapterCount = book.data.chapterOutlines?.length || 0;
+              const isHovered = hoveredId === book.id;
+
+              return (
+                <div
+                  key={book.id}
+                  className="reveal"
+                  style={{
+                    background: 'var(--ink-card)',
+                    border: isCurrent
+                      ? '1px solid rgba(212,166,87,0.4)'
+                      : '1px solid var(--ink-border)',
+                    borderRadius: 16,
+                    overflow: 'hidden',
+                    boxShadow: isCurrent
+                      ? '0 4px 24px rgba(212,166,87,0.15)'
+                      : '0 4px 24px rgba(0,0,0,0.3)',
+                    transition: 'all 0.3s cubic-bezier(0.22,1,0.36,1)',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    transform: isHovered ? 'translateY(-4px)' : 'translateY(0)',
+                  }}
+                  onMouseEnter={() => setHoveredId(book.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                  onClick={() => {
+                    if (deleteConfirmId !== book.id && editingId !== book.id) {
+                      handleSwitch(book.id);
+                    }
+                  }}
+                >
+                  {/* Current indicator */}
+                  {isCurrent && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        right: 0,
+                        padding: '6px 12px',
+                        background: 'linear-gradient(135deg, #d4a657, #f0c674)',
+                        color: '#0a0e1a',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        borderBottomLeftRadius: 10,
+                        zIndex: 2,
+                      }}
+                    >
+                      {'\u2713'} 当前
+                    </div>
+                  )}
+
+                  <div style={{ padding: '24px' }}>
+                    {/* Book Cover Placeholder */}
+                    <div
+                      style={{
+                        width: '100%',
+                        height: 140,
+                        borderRadius: 10,
+                        background: isCurrent
+                          ? 'linear-gradient(135deg, rgba(212,166,87,0.15), rgba(240,198,116,0.05))'
+                          : 'linear-gradient(135deg, var(--ink-surface), var(--ink-deep))',
+                        border: '1px solid var(--ink-border)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginBottom: 16,
+                        fontSize: 48,
+                        transition: 'all 0.3s',
+                      }}
+                    >
+                      <span>{'\u{1F4D6}'}</span>
+                    </div>
+
+                    {/* Title */}
+                    {editingId === book.id ? (
+                      <div
+                        style={{ marginBottom: 12 }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') confirmRename(book.id);
+                            if (e.key === 'Escape') setEditingId(null);
+                          }}
+                          onBlur={() => confirmRename(book.id)}
+                          autoFocus
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            border: '1px solid rgba(212,166,87,0.4)',
+                            borderRadius: 8,
+                            fontSize: 15,
+                            fontWeight: 600,
+                            color: '#e8e4d8',
+                            background: 'var(--ink-surface)',
+                            outline: 'none',
+                            fontFamily: '"Noto Sans SC", sans-serif',
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <h3
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startRename(book);
+                        }}
+                        style={{
+                          fontSize: 16,
+                          fontWeight: 700,
+                          color: '#e8e4d8',
+                          marginBottom: 12,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          cursor: 'text',
+                          transition: 'color 0.2s',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = '#f0c674';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = '#e8e4d8'; e.currentTarget.style.boxShadow='none';
+                        }}
+                      >
+                        {book.title || '未命名'}
+                      </h3>
+                    )}
+
+                    {/* Meta Info */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '8px 16px',
+                        marginBottom: 16,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: '#6a7388',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                        }}
+                      >
+                        {'\u{1F4C5}'} {formatDate(book.updatedAt)}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: chapterCount > 0 ? '#6ec092' : '#6a7388',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                        }}
+                      >
+                        {'\u270E'} {chapterCount} 章
+                      </span>
+                      {book.data.idea && (
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color: '#d4a657',
+                            background: 'rgba(212,166,87,0.08)',
+                            padding: '2px 8px',
+                            borderRadius: 4,
+                          }}
+                        >
+                          {'\u2726'} 已有灵感
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div
+                      style={{
+                        height: 4,
+                        background: 'var(--ink-deep)',
+                        borderRadius: 2,
+                        overflow: 'hidden',
+                        marginBottom: 16,
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${Math.min(
+                            (chapterCount / Math.max(book.data.targetWordCount || 100, 1)) * 100,
+                            100
+                          )}%`,
+                          background: isCurrent
+                            ? 'linear-gradient(90deg, #d4a657, #f0c674)'
+                            : 'linear-gradient(90deg, #2a3650, #3a4660)',
+                          borderRadius: 2,
+                          transition: 'width 0.6s cubic-bezier(0.22,1,0.36,1)',
+                          minWidth: chapterCount > 0 ? '4px' : '0',
+                        }}
+                      />
+                    </div>
+
+                    {/* Actions */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        opacity: isHovered || deleteConfirmId === book.id ? 1 : 0.6,
+                        transition: 'opacity 0.3s',
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={() => handleSwitch(book.id)}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          border: '1px solid rgba(212,166,87,0.3)',
+                          borderRadius: 8,
+                          background: 'rgba(212,166,87,0.08)',
+                          color: '#d4a657',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'rgba(212,166,87,0.15)';
+                          e.currentTarget.style.borderColor = 'rgba(212,166,87,0.5)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'rgba(212,166,87,0.08)';
+                          e.currentTarget.style.borderColor = 'rgba(212,166,87,0.3)'; e.currentTarget.style.boxShadow='none';
+                        }}
+                      >
+                        {'\u25B6'} 继续写作
+                      </button>
+
+                      {deleteConfirmId === book.id ? (
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            onClick={() => handleDelete(book.id)}
+                            style={{
+                              padding: '8px 12px',
+                              border: '1px solid rgba(232,93,104,0.4)',
+                              borderRadius: 8,
+                              background: 'rgba(232,93,104,0.1)',
+                              color: '#e85d68',
+                              fontSize: 12,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              transition: 'all 0.2s',
+                            }}
+                          >
+                            {'\u2713'} 确认
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirmId(null)}
+                            style={{
+                              padding: '8px 12px',
+                              border: '1px solid var(--ink-border)',
+                              borderRadius: 8,
+                              background: 'var(--ink-surface)',
+                              color: '#8a93a8',
+                              fontSize: 12,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              transition: 'all 0.2s',
+                            }}
+                          >
+                            {'\u2715'} 取消
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setDeleteConfirmId(book.id)}
+                          style={{
+                            padding: '8px 12px',
+                            border: '1px solid var(--ink-border)',
+                            borderRadius: 8,
+                            background: 'transparent',
+                            color: '#6a7388',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = '#e85d68';
+                            e.currentTarget.style.borderColor = 'rgba(232,93,104,0.3)';
+                            e.currentTarget.style.background = 'rgba(232,93,104,0.05)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = '#6a7388';
+                            e.currentTarget.style.borderColor = 'var(--ink-border)';
+                            e.currentTarget.style.background = 'transparent'; e.currentTarget.style.boxShadow='none';
+                          }}
+                        >
+                          {'\u{1F5D1}'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,700 @@
+// ============================================
+// 2. 架构搭建页面 — 世界观、角色、剧情
+// ============================================
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useNovelGenesisStore } from '@/lib/store/novelGenesis';
+import { useGenesisStep } from '@/hooks/useGenesisStep';
+import { PhaseNav } from '@/components/PhaseNav';
+import { useReveal } from '@/components/hooks';
+
+interface SectionProps {
+  number: number;
+  title: string;
+  children: React.ReactNode;
+  isDone?: boolean;
+}
+
+function Section({ number, title, children, isDone = false }: SectionProps) {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <div
+      className="reveal"
+      style={{
+        background: 'var(--ink-card)',
+        border: '1px solid var(--ink-border)',
+        borderRadius: 16,
+        overflow: 'hidden',
+        boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+        marginBottom: 20,
+      }}
+    >
+      <div
+        style={{
+          padding: '18px 24px',
+          borderBottom: expanded ? '1px solid var(--ink-border)' : 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          cursor: 'pointer',
+          transition: 'background 0.2s',
+        }}
+        onClick={() => setExpanded(!expanded)}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'rgba(212,166,87,0.05)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent';
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <span
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 14,
+              fontWeight: 700,
+              background: isDone ? 'rgba(110,192,146,0.2)' : 'rgba(212,166,87,0.15)',
+              color: isDone ? '#6ec092' : '#f0c674',
+              border: isDone ? '1px solid rgba(110,192,146,0.3)' : '1px solid rgba(212,166,87,0.3)',
+              flexShrink: 0,
+              transition: 'all 0.3s',
+            }}
+          >
+            {isDone ? '\u2713' : number}
+          </span>
+          <span
+            style={{
+              fontSize: 16,
+              fontWeight: 700,
+              color: '#e8e4d8',
+              fontFamily: '"Noto Sans SC", sans-serif',
+            }}
+          >
+            {title}
+          </span>
+        </div>
+        <span
+          style={{
+            fontSize: 12,
+            color: '#6a7388',
+            transition: 'transform 0.3s',
+            transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
+          }}
+        >
+          {'\u25B4'}
+        </span>
+      </div>
+      {expanded && (
+        <div style={{ padding: '20px 24px 24px' }}>{children}</div>
+      )}
+    </div>
+  );
+}
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '12px',
+  border: '1px solid var(--ink-border)',
+  borderRadius: 10,
+  fontSize: 13,
+  lineHeight: 1.6,
+  color: '#e8e4d8',
+  background: 'var(--ink-surface)',
+  resize: 'vertical',
+  outline: 'none',
+  transition: 'border-color 0.2s, box-shadow 0.2s',
+  fontFamily: '"Noto Sans SC", sans-serif',
+};
+
+const focusHandler = (e: React.FocusEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+  e.currentTarget.style.borderColor = 'rgba(212,166,87,0.4)';
+  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(212,166,87,0.08)';
+};
+const blurHandler = (e: React.FocusEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+  e.currentTarget.style.borderColor = 'var(--ink-border)';
+  e.currentTarget.style.boxShadow = 'none';
+};
+
+const smallBtnGold: React.CSSProperties = {
+  padding: '4px 10px',
+  border: '1px solid rgba(212,166,87,0.3)',
+  borderRadius: 6,
+  background: 'rgba(212,166,87,0.1)',
+  color: '#d4a657',
+  fontSize: 11,
+  fontWeight: 600,
+  cursor: 'pointer',
+  transition: 'all 0.2s',
+};
+
+const ghostBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '8px 16px',
+  border: '1px solid var(--ink-border)',
+  borderRadius: 8,
+  background: 'var(--ink-surface)',
+  color: '#8a93a8',
+  fontSize: 13,
+  fontWeight: 500,
+  cursor: 'pointer',
+  transition: 'all 0.2s',
+};
+
+const goldBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '8px 18px',
+  background: 'linear-gradient(135deg, #d4a657, #f0c674)',
+  color: '#0a0e1a',
+  border: 'none',
+  borderRadius: 8,
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: 'pointer',
+  boxShadow: '0 4px 16px rgba(212,166,87,0.25)',
+  transition: 'all 0.2s',
+};
+
+export default function ArchitecturePage() {
+  useReveal();
+  const { vars, setVar } = useNovelGenesisStore();
+  const { executeStep, isLoading } = useGenesisStep();
+
+  const handleGenerateWorldview = () => {
+    executeStep({
+      projectId: 'novel-genesis',
+      stepId: 4,
+      variables: { idea: vars.idea, tags: vars.tags.join(', '), world: vars.world, geography: vars.geography, rules: vars.rules },
+    });
+  };
+
+  const handleGenerateCharacters = () => {
+    executeStep({
+      projectId: 'novel-genesis',
+      stepId: 8,
+      variables: { idea: vars.idea, tags: vars.tags.join(', '), world: vars.world, geography: vars.geography, rules: vars.rules, characters: vars.characters },
+    });
+  };
+
+  const handleGenerateMainPlot = () => {
+    executeStep({
+      projectId: 'novel-genesis',
+      stepId: 10,
+      variables: { idea: vars.idea, tags: vars.tags.join(', '), mainPlot: vars.mainPlot, characters: vars.characters, world: vars.world, rules: vars.rules },
+    });
+  };
+
+  const handleGenerateDetailedPlot = () => {
+    executeStep({
+      projectId: 'novel-genesis',
+      stepId: 12,
+      variables: { idea: vars.idea, tags: vars.tags.join(', '), mainPlot: vars.mainPlot, detailedPlot: vars.detailedPlot, characters: vars.characters, world: vars.world, rules: vars.rules },
+    });
+  };
+
+  return (
+    <div style={{ background: 'var(--ink-deep)', minHeight: '100vh', paddingTop: 64 }}>
+      <PhaseNav currentPhase={2} />
+
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 24px 80px' }}>
+        {/* Page Header */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 24,
+          }}
+          className="reveal"
+        >
+          <h1
+            style={{
+              fontSize: 26,
+              fontWeight: 700,
+              color: '#f0c674',
+              fontFamily: '"Noto Serif SC", serif',
+            }}
+          >
+            2. 架构搭建
+          </h1>
+          <Link to="/arrangement" style={{ textDecoration: 'none' }}>
+            <button
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '12px 24px',
+                background: 'linear-gradient(135deg, #d4a657, #f0c674)',
+                color: '#0a0e1a',
+                border: 'none',
+                borderRadius: 10,
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: 'pointer',
+                boxShadow: '0 4px 20px rgba(212,166,87,0.3)',
+                transition: 'all 0.3s cubic-bezier(0.22,1,0.36,1)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateX(4px)';
+                e.currentTarget.style.boxShadow = '0 8px 32px rgba(212,166,87,0.45)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateX(0)';
+                e.currentTarget.style.boxShadow = '0 4px 20px rgba(212,166,87,0.3)';
+              }}
+            >
+              <span>下一步: 编排与生成</span>
+              <span>{'\u203A'}</span>
+            </button>
+          </Link>
+        </div>
+
+        {/* Section 1: 世界观设定 */}
+        <Section number={1} title="世界观设定">
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 16,
+            }}
+          >
+            {[
+              { key: 'world' as const, label: '时代背景' },
+              { key: 'geography' as const, label: '地理环境 + 势力分布' },
+              { key: 'rules' as const, label: '核心法则 / 金手指' },
+            ].map((field) => (
+              <div key={field.key}>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#8a93a8',
+                    marginBottom: 8,
+                  }}
+                >
+                  {field.label}
+                </label>
+                <textarea
+                  value={vars[field.key]}
+                  onChange={(e) => setVar(field.key, e.target.value)}
+                  placeholder="输入内容..."
+                  rows={6}
+                  style={inputStyle}
+                  onFocus={focusHandler}
+                  onBlur={blurHandler}
+                />
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    gap: 8,
+                    marginTop: 8,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: '#6a7388',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                  >
+                    {'\u2699'} 配置优化提示词
+                  </span>
+                  <button style={smallBtnGold}>{'\u2726'} 优化</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, gap: 10 }}>
+            <button style={ghostBtn}>{'\u2699'} 提示词</button>
+            <button
+              onClick={handleGenerateWorldview}
+              disabled={isLoading}
+              style={{
+                ...goldBtn,
+                opacity: isLoading ? 0.7 : 1,
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                background: isLoading ? '#2a3650' : goldBtn.background,
+                color: isLoading ? '#6a7388' : goldBtn.color,
+                boxShadow: isLoading ? 'none' : (goldBtn.boxShadow as string),
+              }}
+            >
+              <span>{isLoading ? '\u23F3' : '\u2726'}</span> 一键生成世界观
+            </button>
+          </div>
+        </Section>
+
+        {/* Section 2: 人物小传 */}
+        <Section number={2} title="人物小传 (1人)">
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 20,
+            }}
+          >
+            {/* 左侧：角色编辑 */}
+            <div
+              style={{
+                background: 'var(--ink-surface)',
+                border: '1px solid var(--ink-border)',
+                borderRadius: 12,
+                padding: 16,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 12,
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: '#8a93a8',
+                  }}
+                >
+                  配角 {'\u25BE'}
+                </span>
+                <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6a7388' }}>
+                  {'\u2715'}
+                </button>
+              </div>
+
+              <input
+                type="text"
+                placeholder="新角色"
+                style={{
+                  ...inputStyle,
+                  marginBottom: 10,
+                  resize: 'none' as const,
+                }}
+                onFocus={focusHandler}
+                onBlur={blurHandler}
+              />
+
+              <textarea
+                placeholder="描述角色..."
+                rows={4}
+                style={{ ...inputStyle, marginBottom: 10 }}
+                onFocus={focusHandler}
+                onBlur={blurHandler}
+              />
+
+              <div
+                style={{
+                  background: 'rgba(212,166,87,0.06)',
+                  border: '1px solid rgba(212,166,87,0.15)',
+                  borderRadius: 8,
+                  padding: 12,
+                  marginBottom: 10,
+                }}
+              >
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: '#d4a657',
+                    marginBottom: 6,
+                  }}
+                >
+                  能力/特长
+                </label>
+                <input
+                  type="text"
+                  style={{
+                    ...inputStyle,
+                    border: '1px solid rgba(212,166,87,0.2)',
+                    background: 'var(--ink-card)',
+                  }}
+                  onFocus={focusHandler}
+                  onBlur={blurHandler}
+                />
+              </div>
+
+              <div
+                style={{
+                  background: 'var(--ink-deep)',
+                  border: '1px solid var(--ink-border)',
+                  borderRadius: 8,
+                  padding: 12,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 6,
+                  }}
+                >
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#8a93a8' }}>
+                    当前状态 / 属性表
+                  </span>
+                  <button
+                    style={{
+                      fontSize: 11,
+                      color: '#d4a657',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    编辑属性
+                  </button>
+                </div>
+                <p style={{ fontSize: 12, color: '#6a7388', fontStyle: 'italic' }}>
+                  暂无属性 (如: 心情、修为)
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+                <span style={{ fontSize: 11, color: '#6a7388' }}>{'\u2699'} 配置优化提示词</span>
+                <button style={smallBtnGold}>{'\u2726'} 优化设定</button>
+              </div>
+            </div>
+
+            {/* 右侧：角色列表 */}
+            <div
+              style={{
+                background: 'var(--ink-surface)',
+                border: '2px dashed var(--ink-border-bright)',
+                borderRadius: 12,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: 300,
+              }}
+            >
+              <span style={{ fontSize: 14, color: '#6a7388' }}>+ 手动添加角色</span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, gap: 10 }}>
+            <button style={ghostBtn}>{'\u2699'} 提示词</button>
+            <button
+              onClick={handleGenerateCharacters}
+              disabled={isLoading}
+              style={{
+                ...goldBtn,
+                opacity: isLoading ? 0.7 : 1,
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                background: isLoading ? '#2a3650' : goldBtn.background,
+                color: isLoading ? '#6a7388' : goldBtn.color,
+                boxShadow: isLoading ? 'none' : (goldBtn.boxShadow as string),
+              }}
+            >
+              <span>{isLoading ? '\u23F3' : '\u2726'}</span> 生成核心角色
+            </button>
+          </div>
+        </Section>
+
+        {/* Section 3: 剧情架构 */}
+        <Section number={3} title="剧情架构">
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 20,
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 10,
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#8a93a8' }}>
+                  主线核心脉络
+                </span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    style={{
+                      ...ghostBtn,
+                      padding: '4px 10px',
+                      fontSize: 12,
+                    }}
+                  >
+                    {'\u2699'} 提示词
+                  </button>
+                  <button
+                    onClick={handleGenerateMainPlot}
+                    disabled={isLoading}
+                    style={{
+                      ...goldBtn,
+                      padding: '4px 12px',
+                      fontSize: 12,
+                      opacity: isLoading ? 0.7 : 1,
+                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                      background: isLoading ? '#2a3650' : goldBtn.background,
+                      color: isLoading ? '#6a7388' : goldBtn.color,
+                      boxShadow: isLoading ? 'none' : '0 4px 16px rgba(212,166,87,0.25)',
+                    }}
+                  >
+                    {isLoading ? '\u23F3' : '\u2726'} 生成脉络
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={vars.mainPlot}
+                onChange={(e) => setVar('mainPlot', e.target.value)}
+                placeholder="在此输入主线核心脉络..."
+                rows={10}
+                style={inputStyle}
+                onFocus={focusHandler}
+                onBlur={blurHandler}
+              />
+            </div>
+
+            <div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 10,
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#8a93a8' }}>
+                  详细架构 (爽点/伏笔/转折)
+                </span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    style={{
+                      ...ghostBtn,
+                      padding: '4px 10px',
+                      fontSize: 12,
+                    }}
+                  >
+                    {'\u2699'} 提示词
+                  </button>
+                  <button
+                    style={{
+                      ...goldBtn,
+                      padding: '4px 12px',
+                      fontSize: 12,
+                    }}
+                  >
+                    {'\u2726'} 生成详细大纲
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={vars.detailedPlot}
+                onChange={(e) => setVar('detailedPlot', e.target.value)}
+                placeholder="在此输入详细架构..."
+                rows={10}
+                style={inputStyle}
+                onFocus={focusHandler}
+                onBlur={blurHandler}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16, gap: 16 }}>
+            <span style={{ fontSize: 11, color: '#6a7388', display: 'flex', alignItems: 'center', gap: 4 }}>
+              {'\u2699'} 配置优化提示词
+              <button style={{ ...smallBtnGold, marginLeft: 8 }}>{'\u2726'} 优化脉络</button>
+            </span>
+            <span style={{ fontSize: 11, color: '#6a7388', display: 'flex', alignItems: 'center', gap: 4 }}>
+              {'\u2699'} 配置优化提示词
+              <button style={{ ...smallBtnGold, marginLeft: 8 }}>{'\u2726'} 优化大纲</button>
+            </span>
+          </div>
+        </Section>
+
+        {/* Section 4: 剧情节点拆解 */}
+        <Section number={4} title="剧情节点拆解">
+          <p style={{ fontSize: 13, color: '#8a93a8', marginBottom: 16 }}>
+            将详细大纲拆解为一个个具体的里程碑事件，作为章节生成的路标。
+          </p>
+          <div
+            style={{
+              display: 'flex',
+              gap: 10,
+              marginBottom: 16,
+              flexWrap: 'wrap',
+            }}
+          >
+            {[
+              { icon: '\u2726', label: '智能提炼', active: true },
+              { icon: '\u2699', label: '提示词' },
+              { icon: '\u2699', label: '提示词' },
+              { icon: '\u25CB', label: '无限推演' },
+            ].map((btn, i) => (
+              <button
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: btn.active
+                    ? 'none'
+                    : '1px solid var(--ink-border)',
+                  background: btn.active
+                    ? 'linear-gradient(135deg, #d4a657, #f0c674)'
+                    : 'var(--ink-surface)',
+                  color: btn.active ? '#0a0e1a' : '#8a93a8',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: btn.active
+                    ? '0 4px 16px rgba(212,166,87,0.25)'
+                    : 'none',
+                  transition: 'all 0.2s',
+                }}
+              >
+                <span>{btn.icon}</span>
+                <span>{btn.label}</span>
+              </button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <button
+              style={{
+                ...ghostBtn,
+                padding: '6px 12px',
+                fontSize: 12,
+              }}
+            >
+              {'\u2699'} 逻辑审查
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <input
+              type="text"
+              placeholder="输入新节点后按回车..."
+              style={{
+                ...inputStyle,
+                flex: 1,
+                resize: 'none' as const,
+              }}
+              onFocus={focusHandler}
+              onBlur={blurHandler}
+            />
+            <button style={ghostBtn}>添加</button>
+          </div>
+        </Section>
+      </div>
+    </div>
+  );
+}

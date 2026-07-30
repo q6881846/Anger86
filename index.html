@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>墨文写作 - AI 长篇小说创作引擎</title>
+    <meta name="description" content="从一缕灵感到百万字长篇 - 灵感搅拌、世界观构建、章节编排、智能续写，四步工作流全链路提示词驱动" />
+    <!-- 字体改为系统兜底（离线环境不再外链 Google Fonts，避免 fonts.gstatic.com 请求超时） -->
+    <style>
+      :root { --font-serif: "Noto Serif SC", "Songti SC", "STSong", "SimSun", "Source Han Serif SC", serif;
+              --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Source Han Sans SC", sans-serif;
+              --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, "Courier New", monospace; }
+    </style>
+    <script>
+      (function() {
+        try {
+          document.documentElement.classList.add('js-anim');
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
