@@ -12,7 +12,7 @@ export function apiKeyAuth(req, res, next) {
       clientIp === '127.0.0.1' ||
       clientIp === '::1' ||
       clientIp === '::ffff:127.0.0.1' ||
-      clientIp === '::ffff:172'; // Docker 网关网段兜底
+      clientIp.startsWith('::ffff:172'); // Docker 网关网段兜底
     
     if (isLocalhost) {
       return next();

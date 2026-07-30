@@ -305,26 +305,23 @@ export default function WritingPage() {
   const acceptSuggestion = (index: number) => {
     const s = reviewSuggestions[index];
     if (!s || !s.original) return;
-    const current = vars.content || '';
-    // 精确替换原文（只替换第一次出现，避免误伤）
+    // 直接从 store 读取最新 content，避免闭包旧值导致连续采纳时替换失败
+    const current = useNovelGenesisStore.getState().vars.content || '';
     const replaced = current.replace(s.original, s.replacement || '');
-    if (replaced === current) {
-      // 如果没找到，可能是换行/空格差异，尝试模糊匹配
-      const fuzzy = current.split(s.original.trim())[0] + (s.replacement || '') + current.split(s.original.trim())[1];
-      if (fuzzy !== current) {
-        setVar('content', fuzzy);
-      }
-    } else {
+    if (replaced !== current) {
       setVar('content', replaced);
+    } else {
+      // 模糊匹配：换行/空格差异
+      const parts = current.split(s.original.trim());
+      if (parts.length >= 2) setVar('content', parts[0] + (s.replacement || '') + parts.slice(1).join(s.original.trim()));
     }
     setReviewSuggestions((prev) => prev.filter((_, i) => i !== index));
-    setWordCount((vars.content || '').replace(/\s/g, '').length);
   };
   const ignoreSuggestion = (index: number) => {
     setReviewSuggestions((prev) => prev.filter((_, i) => i !== index));
   };
   const acceptAllSuggestions = () => {
-    let current = vars.content || '';
+    let current = useNovelGenesisStore.getState().vars.content || '';
     for (const s of reviewSuggestions) {
       if (s.original) {
         current = current.replace(s.original, s.replacement || '');
@@ -332,7 +329,6 @@ export default function WritingPage() {
     }
     setVar('content', current);
     setReviewSuggestions([]);
-    setWordCount(current.replace(/\s/g, '').length);
   };
   const ignoreAllSuggestions = () => {
     setReviewSuggestions([]);
@@ -429,9 +425,37 @@ export default function WritingPage() {
         setGenStatus(`⚠ ${tool} 失败：${r.error}（请检查设置中的 API 配置）`);
         return;
       }
+      // 从 LLM 输出中提取 JSON 数组（兼容 markdown 包装、额外文字等情况）
       let parsed: unknown = null;
-      try { parsed = JSON.parse(jsonOut.trim() || '[]'); } catch { parsed = null; }
+      const raw = jsonOut.trim();
+      if (!raw) { parsed = []; }
+      else {
+        // 1. 先尝试直接解析
+        try { parsed = JSON.parse(raw); } catch {}
+        // 2. 提取 ```json ... ``` 代码块
+        if (!parsed) {
+          const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (fenced) try { parsed = JSON.parse(fenced[1].trim()); } catch {}
+        }
+        // 3. 提取第一个 [ ... ] 数组
+        if (!parsed) {
+          const arrMatch = raw.match(/\[[\s\S]*\]/);
+          if (arrMatch) try { parsed = JSON.parse(arrMatch[0]); } catch {}
+        }
+        // 4. 提取第一个 { ... } 对象
+        if (!parsed) {
+          const objMatch = raw.match(/\{[\s\S]*\}/);
+          if (objMatch) try { parsed = JSON.parse(objMatch[0]); } catch {}
+        }
+      }
       const suggestions = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
+      if (suggestions.length === 0 && raw.length > 0) {
+        // JSON 解析完全失败，给用户明确提示
+        setGenStatus(`⚠ ${tool}：模型返回的内容无法解析为校对结果（可能是输出被截断或格式异常）。原始输出前200字：${raw.slice(0, 200)}`);
+        setReviewSuggestions([]);
+        setReviewPanelOpen(true);
+        return;
+      }
       setReviewSuggestions(suggestions as ReviewSuggestion[]);
       setReviewPanelOpen(true);
       setGenProgress(100);

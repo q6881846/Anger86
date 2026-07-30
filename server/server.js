@@ -575,6 +575,8 @@ app.post('/api/genesis/stream', async (req, res) => {
     const INACTIVITY_TIMEOUT = 90000;
     // 推理长度硬上限（字符数）：部分推理模型会陷入超长/循环思考，超过即主动收尾，避免无限制输出
     const MAX_REASONING = 24000;
+    // JSON 输出长度硬上限（字符数）：校对/结构化步骤的输出不应超过此值，防止模型循环输出
+    const MAX_JSON_OUTPUT = 30000;
 
     // 心跳保活：每 15s 写一条 SSE 注释，避免代理/浏览器在长时间推理（思考阶段无正文）时判定连接死亡
     heartbeat = setInterval(() => {
@@ -652,6 +654,12 @@ app.post('/api/genesis/stream', async (req, res) => {
               if (delta.content) {
                 totalChars += delta.content.length;
                 res.write(`data: ${JSON.stringify({ content: delta.content, stepId })}\n\n`);
+                // JSON 输出长度超过硬上限（校对/结构化步骤），主动收尾，防止模型循环输出
+                if (isJson && totalChars > MAX_JSON_OUTPUT) {
+                  console.warn(`[Stream step${stepId}] JSON 输出超过上限（${MAX_JSON_OUTPUT} 字符），主动收尾`);
+                  streamDone = true;
+                  break;
+                }
               }
               if (delta.reasoning) {
                 reasoningChars += delta.reasoning.length;
