@@ -438,7 +438,19 @@ app.post('/api/genesis/step', async (req, res) => {
       return res.status(status).json({ error: `LLM API error (HTTP ${status}): ${errText.slice(0, 300)}` });
     }
 
-    const raw = await llmRes.json();
+    // 先以文本读取，避免部分 GLM 网关在 stream:false 下返回被截断/压缩异常的 JSON 体，
+    // 导致 llmRes.json() 抛出被序列化为 {} 的 TypeError。
+    let raw;
+    const rawText = await llmRes.text();
+    try {
+      raw = JSON.parse(rawText);
+    } catch (parseErr) {
+      console.error(`[LLM] step ${stepId} 响应非合法 JSON（前 500 字符）：`, rawText.slice(0, 500));
+      return res.status(502).json({
+        error: 'LLM 响应解析失败',
+        detail: `网关返回的内容不是合法 JSON（疑似 stream:false 兼容性问题），原始片段：${rawText.slice(0, 300)}`,
+      });
+    }
     const content = adapter.parseResponse(raw);
 
     // JSON 输出校验/修复
@@ -458,8 +470,25 @@ app.post('/api/genesis/step', async (req, res) => {
       jsonParse: jsonParseResult,
     });
   } catch (err) {
-    console.error('[LLM Step Error]', err);
-    res.status(502).json({ error: 'LLM request failed', detail: err.message });
+    const maskedKey = adapter.apiKey
+      ? `${adapter.apiKey.slice(0, 4)}***${adapter.apiKey.slice(-4)}`
+      : '(empty)';
+    // 避免 TypeError/网络错误被序列化成 {} 而吞掉真实原因
+    console.error('[LLM Step Error]', {
+      message: err?.message || String(err),
+      cause: err?.cause ? (err.cause.message || String(err.cause)) : undefined,
+      stack: err?.stack,
+      provider: adapter.provider,
+      baseURL: adapter.baseURL,
+      model: adapter.model,
+      apiKey: maskedKey,
+      stepId,
+    });
+    res.status(502).json({
+      error: 'LLM request failed',
+      detail: err?.message || String(err),
+      cause: err?.cause ? (err.cause.message || String(err.cause)) : undefined,
+    });
   }
 });
 
@@ -542,6 +571,10 @@ app.post('/api/genesis/stream', async (req, res) => {
     let heartbeat = null;
     // 首字节超时（毫秒）：网关对超大 max_tokens 可能长时间不返回任何数据（实测 128k 会 hang 满 600s）
     const FIRST_BYTE_TIMEOUT = 120000;
+    // 闲置超时（毫秒）：已开始输出后，若超过该时长仍无任何新数据（思考或正文），判定模型卡死/网关异常，主动结束
+    const INACTIVITY_TIMEOUT = 90000;
+    // 推理长度硬上限（字符数）：部分推理模型会陷入超长/循环思考，超过即主动收尾，避免无限制输出
+    const MAX_REASONING = 24000;
 
     // 心跳保活：每 15s 写一条 SSE 注释，避免代理/浏览器在长时间推理（思考阶段无正文）时判定连接死亡
     heartbeat = setInterval(() => {
@@ -575,7 +608,21 @@ app.post('/api/genesis/stream', async (req, res) => {
           ),
         ]);
       } else {
-        readResult = await reader.read();
+        // 闲置超时保护：已开始输出后，若超过 INACTIVITY_TIMEOUT 仍无任何新数据，判定模型卡死，主动结束
+        readResult = await Promise.race([
+          reader.read(),
+          new Promise((resolve) =>
+            setTimeout(
+              () => resolve({ done: false, value: undefined, _inactive: true }),
+              INACTIVITY_TIMEOUT,
+            ),
+          ),
+        ]);
+        if (readResult && readResult._inactive) {
+          console.warn(`[Stream step${stepId}] 闲置超时（${INACTIVITY_TIMEOUT}ms 无新数据），主动结束`);
+          streamDone = true;
+          break;
+        }
       }
       streamDone = readResult.done;
       if (readResult.done) break;
@@ -609,6 +656,12 @@ app.post('/api/genesis/stream', async (req, res) => {
               if (delta.reasoning) {
                 reasoningChars += delta.reasoning.length;
                 res.write(`data: ${JSON.stringify({ reasoning: delta.reasoning, stepId })}\n\n`);
+                // 推理长度超过硬上限（如模型陷入循环思考），主动收尾，避免无限制输出
+                if (reasoningChars > MAX_REASONING) {
+                  console.warn(`[Stream step${stepId}] 推理长度超过上限（${MAX_REASONING} 字符），主动收尾`);
+                  streamDone = true;
+                  break;
+                }
               }
             }
           } catch (parseErr) {

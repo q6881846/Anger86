@@ -213,6 +213,11 @@ body {
   text-shadow: 0 0 8px rgba(212,166,87,0.3);
 }
 
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 /* ---- Reveal Animation (keep existing) ---- */
 .reveal { opacity: 1; transform: none; transition: opacity 0.8s var(--ease-out), transform 0.8s var(--ease-out); }
 html.js-anim .reveal { opacity: 0; transform: translateY(40px); }

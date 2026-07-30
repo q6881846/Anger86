@@ -10,7 +10,6 @@ import { fillStep, stepIdToKey } from '@/lib/prompts/prompt-api';
 import { fetchWithAuth } from '@/lib/api/fetchWithAuth';
 import { useApiStore } from '@/lib/store/apiStore';
 import { useParamsStore } from '@/lib/store/paramsStore';
-import { runStepLLM } from '@/hooks/useGenesisStep';
 import type { ChapterOutline, ModuleName } from '@/lib/types';
 
 // 依据章节大纲，合成一段完整章节草稿（离线模板，接入真实模型后替换）
@@ -57,11 +56,12 @@ function pick(obj: Record<string, unknown>, keys: string[]): Record<string, unkn
   return r;
 }
 
-// 工具栏 → 步骤 + 模块 + 模式 的权威映射（与 STEP_MODULE_MAP / prompt-templates.json 对齐）
+// 工具栏 → 步骤 + 模块 + 模式 的权威映射（与 STEP_MODULE_MAP / prompt-templates.json 严格对齐）
+// 注意：润色去AI 对应 step19→textOptimize，校对对应 step18→chapterReview，状态同步对应 step20→stateSync
 const TOOL_STEP: Record<string, { step: number; module: ModuleName; mode: 'text' | 'json'; append?: boolean }> = {
   '智能写作': { step: 16, module: 'writing', mode: 'text' },
   '智能续写': { step: 17, module: 'writing', mode: 'text', append: true },
-  '润色去AI': { step: 19, module: 'writing', mode: 'text' },
+  '润色去AI': { step: 19, module: 'textOptimize', mode: 'text' },
   '智能校对': { step: 18, module: 'chapterReview', mode: 'json' },
   '状态同步': { step: 20, module: 'stateSync', mode: 'json' },
 };
@@ -75,42 +75,83 @@ const STEP_KEYS: Record<number, string[]> = {
   20: ['chapterSummary','characters','content'],
 };
 
-// 解析模块对应的 LLM 配置（优先：分配给该模块且含 apiKey 的配置 → 任一启用且含 key 的配置）
-function resolveLlm(module: ModuleName) {
+// 解析模块对应的 LLM 配置，并返回来源（便于在 UI 上明示「已连接」状态）
+// 优先级：① 明确分配给该模块且启用+含 key 的配置 → ② 写作(writing)模块配置 → ③ 任一启用且含 key 的配置
+export interface ResolvedApi {
+  config: {
+    provider: string;
+    apiKey: string;
+    baseUrl: string;
+    model: string;
+    temperature: number;
+    maxTokens?: number;
+  } | undefined;
+  name: string | undefined;
+  via: 'module' | 'writing' | 'fallback' | 'none';
+}
+function resolveApi(module: ModuleName): ResolvedApi {
   const st = useApiStore.getState();
-  const modCfg = st.getLlmConfigForModule(module);
-  if (modCfg) return modCfg;
-  const active = st.configs.find((c) => c.enabled && c.apiKey);
-  if (active) {
-    return {
-      provider: active.provider,
-      apiKey: active.apiKey,
-      baseUrl: active.baseUrl,
-      model: active.model,
-      temperature: active.temperature,
-      maxTokens: active.maxTokens || undefined,
-    };
+  const findFor = (m: ModuleName) =>
+    st.configs.find((x) => x.enabled && x.apiKey && x.assignedModules.includes(m));
+  let c = findFor(module);
+  let via: ResolvedApi['via'] = 'none';
+  if (c) via = 'module';
+  else if (module !== 'writing') {
+    c = findFor('writing');
+    if (c) via = 'writing';
   }
-  return undefined;
+  if (!c) {
+    c = st.configs.find((x) => x.enabled && x.apiKey);
+    if (c) via = 'fallback';
+  }
+  if (!c) return { config: undefined, name: undefined, via: 'none' };
+  return {
+    config: {
+      provider: c.provider,
+      apiKey: c.apiKey,
+      baseUrl: c.baseUrl,
+      model: c.model,
+      temperature: c.temperature,
+      maxTokens: c.maxTokens || undefined,
+    },
+    name: c.name,
+    via,
+  };
+}
+
+// 供 UI 展示：单个写作工具是否已连通 API
+function getToolApiState(tool: string): { connected: boolean; label: string } {
+  const cfg = TOOL_STEP[tool];
+  if (!cfg) return { connected: false, label: '未知工具' };
+  const r = resolveApi(cfg.module);
+  if (!r.config) return { connected: false, label: '未配置 API' };
+  const suffix = r.via === 'module' ? '' : r.via === 'writing' ? '(复用写作模型)' : '(复用默认模型)';
+  return { connected: true, label: `已连接 ${r.name} ${suffix}`.trim() };
 }
 
 // 真正调用后端流式接口（/api/genesis/stream），按 SSE 解析并回调 onChunk
+// hooks.onReasoning：模型「思考过程」片段（LongCat/GLM 在出正文前会先输出大量 reasoning）
+// hooks.onActivity：阶段切换（thinking=思考中 / writing=正在出正文），用于实时刷新状态与进度
 async function callLLMStream(
   stepId: number,
   variables: Record<string, unknown>,
   module: ModuleName,
   onChunk: (s: string) => void,
-): Promise<{ ok: boolean; output: string; error?: string }> {
+  hooks?: { onReasoning?: (s: string) => void; onActivity?: (phase: 'thinking' | 'writing') => void },
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; output: string; error?: string; aborted?: boolean }> {
   try {
     const filled = await fillStep(stepId, variables);
-    const llmConfig = resolveLlm(module);
+    const resolved = resolveApi(module);
+    const llmConfig = resolved.config;
     if (!llmConfig || !llmConfig.apiKey) {
-      return { ok: false, output: '', error: '未配置 API Key（请在「设置 → API 配置」中填写 API Key 并分配给写作模块）' };
+      return { ok: false, output: '', error: '未配置 API Key（请在「设置 → API 配置」中填写 API Key 并启用）' };
     }
     const stepKey = stepIdToKey(stepId);
     const params = useParamsStore.getState().getEffectiveParams(stepKey);
     const res = await fetchWithAuth('/api/genesis/stream', {
       method: 'POST',
+      signal,
       body: JSON.stringify({
         stepId,
         system: filled.system,
@@ -137,8 +178,20 @@ async function callLLMStream(
         if (!json || json === '[DONE]') continue;
         try {
           const parsed = JSON.parse(json);
-          const c = parsed.content || '';
-          if (c) onChunk(c);
+          // 后端在流式过程中传入错误对象，必须在此捕获，否则会被当成成功静默吞掉
+          if (parsed.error) {
+            const e = parsed.error;
+            const msg = e?.detail || e?.message || (typeof e === 'string' ? e : JSON.stringify(e));
+            return { ok: false, output: '', error: msg };
+          }
+          if (parsed.reasoning) {
+            hooks?.onReasoning?.(parsed.reasoning);
+            hooks?.onActivity?.('thinking');
+          }
+          if (parsed.content) {
+            onChunk(parsed.content);
+            hooks?.onActivity?.('writing');
+          }
         } catch {
           /* 忽略心跳/非 JSON 行 */
         }
@@ -146,6 +199,9 @@ async function callLLMStream(
     }
     return { ok: true, output: '' };
   } catch (e: unknown) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      return { ok: false, output: '', error: '已停止生成', aborted: true };
+    }
     return { ok: false, output: '', error: e instanceof Error ? e.message : String(e) };
   }
 }
@@ -199,6 +255,13 @@ const goldBtn: React.CSSProperties = {
 export default function WritingPage() {
   useReveal();
   const { vars, setVar, getVar } = useNovelGenesisStore();
+  // 订阅 API 配置，使工具栏的「已连接」状态在设置变更后实时刷新
+  const apiConfigs = useApiStore((s) => s.configs);
+  void apiConfigs;
+  // 预计算每个写作工具的 API 连接状态（渲染工具栏状态点 / 底部摘要用）
+  const toolApiStates: Record<string, { connected: boolean; label: string }> = {};
+  for (const t of AI_TOOLS) toolApiStates[t.label] = getToolApiState(t.label);
+  const allConnected = AI_TOOLS.every((t) => toolApiStates[t.label].connected);
   const [activeChapter, setActiveChapter] = useState(1);
   const [wordCount, setWordCount] = useState(0);
   const [activeTool, setActiveTool] = useState<string | null>(null);
@@ -206,9 +269,22 @@ export default function WritingPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [genTool, setGenTool] = useState<string | null>(null);
   const [genProgress, setGenProgress] = useState(0);
+  // 用于「停止生成」：中止当前流式请求（前端 abort → 后端检测到断开后停止调用模型）
+  const abortRef = useRef<AbortController | null>(null);
   const [genStatus, setGenStatus] = useState('');
   const [saveToast, setSaveToast] = useState('');
   const pulseRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // === 智能校对面板状态 ===
+  const [reviewPanelOpen, setReviewPanelOpen] = useState(false);
+  interface ReviewSuggestion {
+    original: string;
+    replacement: string;
+    reason: string;
+    type: string;
+  }
+  const [reviewSuggestions, setReviewSuggestions] = useState<ReviewSuggestion[]>([]);
+
   const chapterOutlines = useProjectStore((s) => s.chapterOutlines);
   const updateChapter = useProjectStore((s) => s.updateChapter);
   const chapters = chapterOutlines.length
@@ -224,6 +300,43 @@ export default function WritingPage() {
     pulseRef.current = setInterval(() => { setGenProgress((p) => (p >= 90 ? 15 : p + 12)); }, 120);
   };
   useEffect(() => () => stopPulse(), []);
+
+  // === 采纳/忽略 校对建议 ===
+  const acceptSuggestion = (index: number) => {
+    const s = reviewSuggestions[index];
+    if (!s || !s.original) return;
+    const current = vars.content || '';
+    // 精确替换原文（只替换第一次出现，避免误伤）
+    const replaced = current.replace(s.original, s.replacement || '');
+    if (replaced === current) {
+      // 如果没找到，可能是换行/空格差异，尝试模糊匹配
+      const fuzzy = current.split(s.original.trim())[0] + (s.replacement || '') + current.split(s.original.trim())[1];
+      if (fuzzy !== current) {
+        setVar('content', fuzzy);
+      }
+    } else {
+      setVar('content', replaced);
+    }
+    setReviewSuggestions((prev) => prev.filter((_, i) => i !== index));
+    setWordCount((vars.content || '').replace(/\s/g, '').length);
+  };
+  const ignoreSuggestion = (index: number) => {
+    setReviewSuggestions((prev) => prev.filter((_, i) => i !== index));
+  };
+  const acceptAllSuggestions = () => {
+    let current = vars.content || '';
+    for (const s of reviewSuggestions) {
+      if (s.original) {
+        current = current.replace(s.original, s.replacement || '');
+      }
+    }
+    setVar('content', current);
+    setReviewSuggestions([]);
+    setWordCount(current.replace(/\s/g, '').length);
+  };
+  const ignoreAllSuggestions = () => {
+    setReviewSuggestions([]);
+  };
 
   // 依据大纲与全局设定，组装各 step 所需的变量
   const buildAllVars = () => {
@@ -271,31 +384,60 @@ export default function WritingPage() {
     setIsGenerating(true);
     setGenTool(tool);
     setGenProgress(0);
-    setGenStatus(`${tool}：正在连接 API（${cfg.module} / step${cfg.step}）…`);
+    const apiInfo = resolveApi(cfg.module);
+    const apiDesc = apiInfo.config ? `${apiInfo.name}${apiInfo.via === 'module' ? '' : apiInfo.via === 'writing' ? '(复用写作模型)' : '(复用默认模型)'}` : '未配置 API';
+    setGenStatus(`${tool}：正在连接 API（${apiDesc} / ${cfg.module} / step${cfg.step}）…`);
     const variables = pick(buildAllVars(), STEP_KEYS[cfg.step] || []);
+    // 每次生成创建独立 AbortController，供「停止生成」按钮中止
+    const ac = new AbortController();
+    abortRef.current = ac;
 
-    // 结构化结果类（校对 / 状态同步）：走一次性接口
+    // 结构化结果类（校对 / 状态同步）：同样走已验证可用的「流式接口」
+    // —— 非流式接口 /api/genesis/step 在部分 GLM 网关下会把 JSON 体截断/压缩异常导致解析崩溃，
+    //    而流式是逐块读原始流，规避了该问题（智能写作正是走这条且正常）。
     if (cfg.mode === 'json') {
-      try {
-        const r = await runStepLLM(cfg.step, variables);
-        const out = typeof r.output === 'string' ? r.output : '';
-        let count = 0;
-        try {
-          const parsed = JSON.parse(out);
-          count = Array.isArray(parsed) ? parsed.length : (out ? 1 : 0);
-        } catch {
-          count = out ? 1 : 0;
-        }
-        setIsGenerating(false);
-        setGenTool(null);
-        setGenStatus(`✓ ${tool} 完成，返回 ${count} 条结果（详见控制台）`);
-        // eslint-disable-next-line no-console
-        console.log(`[${tool}] 结果：`, out);
-      } catch (e: unknown) {
-        setIsGenerating(false);
-        setGenTool(null);
-        setGenStatus(`✗ ${tool} 失败：${e instanceof Error ? e.message : String(e)}`);
+      let reasoningLen = 0;
+      let jsonOut = '';
+      const r = await callLLMStream(
+        cfg.step,
+        variables,
+        cfg.module,
+        (chunk) => {
+          jsonOut += chunk; // 累积到本地变量，不污染编辑区
+          setGenProgress((p) => Math.min(95, p + 3));
+        },
+        {
+          onReasoning: (s) => {
+            reasoningLen += s.length;
+            setGenStatus(`${tool}：模型思考中…（已思考 ${reasoningLen} 字，即将生成结果）`);
+            setGenProgress((p) => Math.min(70, p + 1));
+          },
+          onActivity: (phase) => {
+            if (phase === 'writing') setGenStatus(`${tool}：正在生成结构化结果…`);
+          },
+        },
+        ac.signal,
+      );
+      setIsGenerating(false);
+      setGenTool(null);
+      abortRef.current = null;
+      if (r.aborted) {
+        setGenStatus(`■ ${tool} 已停止生成`);
+        return;
       }
+      if (!r.ok) {
+        setGenStatus(`⚠ ${tool} 失败：${r.error}（请检查设置中的 API 配置）`);
+        return;
+      }
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(jsonOut.trim() || '[]'); } catch { parsed = null; }
+      const suggestions = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
+      setReviewSuggestions(suggestions as ReviewSuggestion[]);
+      setReviewPanelOpen(true);
+      setGenProgress(100);
+      setGenStatus(`✓ ${tool} 完成，发现 ${suggestions.length} 条建议（右侧面板可采纳/忽略）`);
+      // eslint-disable-next-line no-console
+      console.log(`[${tool}] 结果：`, suggestions);
       return;
     }
 
@@ -303,29 +445,46 @@ export default function WritingPage() {
     let acc = '';
     const base = cfg.append && vars.content ? vars.content + '\n\n' : '';
     startPulse();
-    const res = await callLLMStream(cfg.step, variables, cfg.module, (s: string) => {
-      acc += s;
-      const full = base + acc;
-      setVar('content', full);
-      setWordCount(full.replace(/\s/g, '').length);
-      setGenStatus(`${tool}：正在生成…（已收到 ${acc.replace(/\s/g, '').length} 字）`);
-    });
+    let thinkingLen = 0;
+    const res = await callLLMStream(
+      cfg.step,
+      variables,
+      cfg.module,
+      (s: string) => {
+        acc += s;
+        const full = base + acc;
+        setVar('content', full);
+        setWordCount(full.replace(/\s/g, '').length);
+        setGenStatus(`${tool}：正在生成…（已收到 ${acc.replace(/\s/g, '').length} 字）`);
+      },
+      {
+        onReasoning: (s) => {
+          thinkingLen += s.length;
+          setGenStatus(`${tool}：模型思考中…（已思考 ${thinkingLen} 字，即将输出正文）`);
+          setGenProgress((p) => Math.min(60, p + 1));
+        },
+      },
+      ac.signal,
+    );
     stopPulse();
+    setIsGenerating(false);
+    setGenTool(null);
+    abortRef.current = null;
+    if (res.aborted) {
+      setGenStatus(`■ ${tool} 已停止生成（已保留已生成内容）`);
+      return;
+    }
     if (!res.ok) {
       // API 未连通：回退本地模板并明确提示，避免「点了没反应」
       const fb = base + composeChapter(activeOutline, activeChapter);
       setVar('content', fb);
       setWordCount(fb.replace(/\s/g, '').length);
-      setIsGenerating(false);
-      setGenTool(null);
       setGenStatus(`⚠ ${tool} 未连接 API（${res.error}）；已用本地模板生成占位，请检查 API Key 配置与后端服务是否在运行`);
       return;
     }
     const finalText = base + acc;
     setVar('content', finalText);
     setWordCount(finalText.replace(/\s/g, '').length);
-    setIsGenerating(false);
-    setGenTool(null);
     setGenProgress(100);
     setGenStatus(`${tool}：✓ 已生成约 ${finalText.replace(/\s/g, '').length} 字`);
   };
@@ -339,9 +498,10 @@ export default function WritingPage() {
           className="reveal"
           style={{
             display: 'grid',
-            gridTemplateColumns: '240px 1fr',
-            gap: 20,
+            gridTemplateColumns: reviewPanelOpen ? '240px 1fr 320px' : '240px 1fr',
+            gap: reviewPanelOpen ? 20 : 20,
             alignItems: 'start',
+            transition: 'grid-template-columns 0.3s ease',
           }}
         >
           {/* Left: Chapter List */}
@@ -485,6 +645,7 @@ export default function WritingPage() {
                   const isActive = activeTool === tool.label;
                   const isRunning = isGenerating && genTool === tool.label;
                   const disabled = isGenerating;
+                  const api = toolApiStates[tool.label];
                   return (
                   <button
                     key={tool.label}
@@ -518,11 +679,23 @@ export default function WritingPage() {
                       e.currentTarget.style.transform = 'scale(1)';
                       e.currentTarget.style.boxShadow = isActive ? `0 0 0 2px ${tool.color}40` : 'none';
                     }}
+                    title={api ? api.label : ''}
                   >
                     {isRunning
                       ? <span style={{ display: 'inline-block', animation: 'spin 0.8s linear infinite' }}>◌</span>
                       : <span>{tool.icon}</span>}
                     <span>{isRunning ? '生成中…' : tool.label}</span>
+                    <span
+                      title={api ? api.label : '未配置 API'}
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: '50%',
+                        background: api && api.connected ? '#6ec092' : '#e85d68',
+                        boxShadow: api && api.connected ? '0 0 6px #6ec092' : '0 0 6px #e85d68',
+                        flexShrink: 0,
+                      }}
+                    />
                   </button>
                   );
                 })}
@@ -534,6 +707,30 @@ export default function WritingPage() {
                     </div>
                   </div>
                 )}
+                {isGenerating && (
+                  <button
+                    onClick={() => abortRef.current?.abort()}
+                    style={{
+                      alignSelf: 'flex-start',
+                      padding: '4px 12px',
+                      borderRadius: 6,
+                      border: '1px solid #e85d68',
+                      background: 'rgba(232,93,104,0.12)',
+                      color: '#e85d68',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ■ 停止生成
+                  </button>
+                )}
+                <div style={{ width: '100%', fontSize: 11, color: allConnected ? '#6a7388' : '#e85d68', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: allConnected ? '#6ec092' : '#e85d68', boxShadow: allConnected ? '0 0 6px #6ec092' : '0 0 6px #e85d68' }} />
+                  {allConnected
+                    ? '全部写作工具已连接 API：智能写作/续写/润色/校对/状态同步 均会调用你配置的模型（未单独分配模块的将复用默认启用模型）。'
+                    : '⚠ 部分写作工具未配置 API：请到「设置 → API 配置」填写 API Key 并启用，或将模型分配到对应模块（正文写作 / 文本优化 / 章节审查 / 状态同步）。'}
+                </div>
               </div>
 
               {/* Mode Bar */}
@@ -696,9 +893,255 @@ export default function WritingPage() {
                     e.currentTarget.style.borderColor = 'transparent';
                   }}
                 />
-              </div>
             </div>
           </div>
+
+          {/* Review Panel — 智能校对面板 */}
+          {reviewPanelOpen && (
+            <div
+              style={{
+                background: 'var(--ink-card)',
+                border: '1px solid var(--ink-border)',
+                borderRadius: 16,
+                overflow: 'hidden',
+                boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+                position: 'sticky',
+                top: 72,
+                maxHeight: 'calc(100vh - 100px)',
+                display: 'flex',
+                flexDirection: 'column',
+                animation: 'slideInRight 0.3s ease-out',
+              }}
+            >
+              {/* Panel Header */}
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderBottom: '1px solid var(--ink-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 16 }}>{'\u2699'}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#7a9ef0' }}>
+                    智能校对 ({reviewSuggestions.length})
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {reviewSuggestions.length > 0 && (
+                    <>
+                      <button
+                        onClick={acceptAllSuggestions}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: 4,
+                          border: '1px solid #6ec092',
+                          background: 'rgba(110,192,146,0.12)',
+                          color: '#6ec092',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        全部采纳
+                      </button>
+                      <button
+                        onClick={ignoreAllSuggestions}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: 4,
+                          border: '1px solid #e85d68',
+                          background: 'rgba(232,93,104,0.12)',
+                          color: '#e85d68',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        全部忽略
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => setReviewPanelOpen(false)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: '#6a7388',
+                      fontSize: 14,
+                      padding: '0 4px',
+                    }}
+                    title="关闭面板"
+                  >
+                    {'\u2715'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Suggestions List */}
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  padding: '12px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                {reviewSuggestions.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px 20px', color: '#6a7388', fontSize: 13 }}>
+                    <div style={{ fontSize: 32, marginBottom: 12 }}>{'\u2705'}</div>
+                    <div>未发现明显问题</div>
+                    <div style={{ fontSize: 12, marginTop: 4, opacity: 0.7 }}>AI 已完成全文校对，未检测到逻辑漏洞或需要修改的内容。</div>
+                  </div>
+                ) : (
+                  reviewSuggestions.map((s, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        background: 'var(--ink-surface)',
+                        border: '1px solid var(--ink-border)',
+                        borderRadius: 10,
+                        padding: '12px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                      }}
+                    >
+                      {/* Type Badge + Reason */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 600,
+                            padding: '2px 8px',
+                            borderRadius: 4,
+                            background:
+                              s.type === 'fix'
+                                ? 'rgba(232,93,104,0.15)'
+                                : s.type === 'optimize'
+                                  ? 'rgba(122,158,240,0.15)'
+                                  : 'rgba(212,166,87,0.15)',
+                            color:
+                              s.type === 'fix'
+                                ? '#e85d68'
+                                : s.type === 'optimize'
+                                  ? '#7a9ef0'
+                                  : '#f0c674',
+                          }}
+                        >
+                          {s.type === 'fix' ? '修复' : s.type === 'optimize' ? '优化' : '校对'}
+                        </span>
+                        <span style={{ fontSize: 12, color: '#8a93a8', flex: 1 }}>{s.reason}</span>
+                      </div>
+
+                      {/* Original */}
+                      {s.original && (
+                        <div>
+                          <div style={{ fontSize: 11, color: '#6a7388', marginBottom: 4 }}>原文</div>
+                          <div
+                            style={{
+                              fontSize: 12,
+                              color: '#e8e4d8',
+                              background: 'rgba(232,93,104,0.06)',
+                              padding: '8px 10px',
+                              borderRadius: 6,
+                              borderLeft: '3px solid #e85d68',
+                              lineHeight: 1.6,
+                              maxHeight: 120,
+                              overflowY: 'auto',
+                            }}
+                          >
+                            {s.original}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Replacement */}
+                      {s.replacement && (
+                        <div>
+                          <div style={{ fontSize: 11, color: '#6a7388', marginBottom: 4 }}>建议修改</div>
+                          <div
+                            style={{
+                              fontSize: 12,
+                              color: '#e8e4d8',
+                              background: 'rgba(110,192,146,0.06)',
+                              padding: '8px 10px',
+                              borderRadius: 6,
+                              borderLeft: '3px solid #6ec092',
+                              lineHeight: 1.6,
+                              maxHeight: 120,
+                              overflowY: 'auto',
+                            }}
+                          >
+                            {s.replacement}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                        <button
+                          onClick={() => acceptSuggestion(i)}
+                          style={{
+                            flex: 1,
+                            padding: '6px 0',
+                            borderRadius: 6,
+                            border: '1px solid #6ec092',
+                            background: 'rgba(110,192,146,0.12)',
+                            color: '#6ec092',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(110,192,146,0.25)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'rgba(110,192,146,0.12)';
+                          }}
+                        >
+                          采纳
+                        </button>
+                        <button
+                          onClick={() => ignoreSuggestion(i)}
+                          style={{
+                            flex: 1,
+                            padding: '6px 0',
+                            borderRadius: 6,
+                            border: '1px solid var(--ink-border)',
+                            background: 'var(--ink-surface)',
+                            color: '#8a93a8',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(232,93,104,0.1)';
+                            e.currentTarget.style.borderColor = '#e85d68';
+                            e.currentTarget.style.color = '#e85d68';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'var(--ink-surface)';
+                            e.currentTarget.style.borderColor = 'var(--ink-border)';
+                            e.currentTarget.style.color = '#8a93a8';
+                          }}
+                        >
+                          忽略
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
