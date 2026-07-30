@@ -6,7 +6,11 @@ import { useNovelGenesisStore } from '@/lib/store/novelGenesis';
 import { useProjectStore } from '@/lib/store/projectStore';
 import { PhaseNav } from '@/components/PhaseNav';
 import { useReveal } from '@/components/hooks';
-import { useGenesisStep } from '@/hooks/useGenesisStep';
+import { fillStep, stepIdToKey } from '@/lib/prompts/prompt-api';
+import { fetchWithAuth } from '@/lib/api/fetchWithAuth';
+import { useApiStore } from '@/lib/store/apiStore';
+import { useParamsStore } from '@/lib/store/paramsStore';
+import { runStepLLM } from '@/hooks/useGenesisStep';
 import type { ChapterOutline, ModuleName } from '@/lib/types';
 
 // 依据章节大纲，合成一段完整章节草稿（离线模板，接入真实模型后替换）
@@ -71,6 +75,81 @@ const STEP_KEYS: Record<number, string[]> = {
   20: ['chapterSummary','characters','content'],
 };
 
+// 解析模块对应的 LLM 配置（优先：分配给该模块且含 apiKey 的配置 → 任一启用且含 key 的配置）
+function resolveLlm(module: ModuleName) {
+  const st = useApiStore.getState();
+  const modCfg = st.getLlmConfigForModule(module);
+  if (modCfg) return modCfg;
+  const active = st.configs.find((c) => c.enabled && c.apiKey);
+  if (active) {
+    return {
+      provider: active.provider,
+      apiKey: active.apiKey,
+      baseUrl: active.baseUrl,
+      model: active.model,
+      temperature: active.temperature,
+      maxTokens: active.maxTokens || undefined,
+    };
+  }
+  return undefined;
+}
+
+// 真正调用后端流式接口（/api/genesis/stream），按 SSE 解析并回调 onChunk
+async function callLLMStream(
+  stepId: number,
+  variables: Record<string, unknown>,
+  module: ModuleName,
+  onChunk: (s: string) => void,
+): Promise<{ ok: boolean; output: string; error?: string }> {
+  try {
+    const filled = await fillStep(stepId, variables);
+    const llmConfig = resolveLlm(module);
+    if (!llmConfig || !llmConfig.apiKey) {
+      return { ok: false, output: '', error: '未配置 API Key（请在「设置 → API 配置」中填写 API Key 并分配给写作模块）' };
+    }
+    const stepKey = stepIdToKey(stepId);
+    const params = useParamsStore.getState().getEffectiveParams(stepKey);
+    const res = await fetchWithAuth('/api/genesis/stream', {
+      method: 'POST',
+      body: JSON.stringify({
+        stepId,
+        system: filled.system,
+        user: filled.user,
+        outputType: filled.outputType,
+        llmConfig,
+        params,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      return { ok: false, output: '', error: `后端错误 ${res.status}：${err || res.statusText}` };
+    }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let done = false;
+    while (!done) {
+      const rd = await reader.read();
+      if (rd.done) break;
+      const chunk = decoder.decode(rd.value, { stream: true });
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const json = line.slice(6).trim();
+        if (!json || json === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(json);
+          const c = parsed.content || '';
+          if (c) onChunk(c);
+        } catch {
+          /* 忽略心跳/非 JSON 行 */
+        }
+      }
+    }
+    return { ok: true, output: '' };
+  } catch (e: unknown) {
+    return { ok: false, output: '', error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 const AI_TOOLS = [
   { icon: '\u2726', label: '智能写作', color: '#f0c674', bg: 'rgba(212,166,87,0.12)' },
   { icon: '\u2726', label: '智能续写', color: '#6ec092', bg: 'rgba(110,192,146,0.1)' },
@@ -120,7 +199,6 @@ const goldBtn: React.CSSProperties = {
 export default function WritingPage() {
   useReveal();
   const { vars, setVar, getVar } = useNovelGenesisStore();
-  const { executeStep, executeStreamStep } = useGenesisStep();
   const [activeChapter, setActiveChapter] = useState(1);
   const [wordCount, setWordCount] = useState(0);
   const [activeTool, setActiveTool] = useState<string | null>(null);
@@ -196,19 +274,28 @@ export default function WritingPage() {
     setGenStatus(`${tool}：正在连接 API（${cfg.module} / step${cfg.step}）…`);
     const variables = pick(buildAllVars(), STEP_KEYS[cfg.step] || []);
 
-    // 结构化结果类（校对 / 状态同步）
+    // 结构化结果类（校对 / 状态同步）：走一次性接口
     if (cfg.mode === 'json') {
-      const res = await executeStep(cfg.step, variables, { module: cfg.module });
-      setIsGenerating(false);
-      setGenTool(null);
-      if (!res.ok) {
-        setGenStatus(`✗ ${tool} 失败：${res.error || '未知错误'}`);
-        return;
+      try {
+        const r = await runStepLLM(cfg.step, variables);
+        const out = typeof r.output === 'string' ? r.output : '';
+        let count = 0;
+        try {
+          const parsed = JSON.parse(out);
+          count = Array.isArray(parsed) ? parsed.length : (out ? 1 : 0);
+        } catch {
+          count = out ? 1 : 0;
+        }
+        setIsGenerating(false);
+        setGenTool(null);
+        setGenStatus(`✓ ${tool} 完成，返回 ${count} 条结果（详见控制台）`);
+        // eslint-disable-next-line no-console
+        console.log(`[${tool}] 结果：`, out);
+      } catch (e: unknown) {
+        setIsGenerating(false);
+        setGenTool(null);
+        setGenStatus(`✗ ${tool} 失败：${e instanceof Error ? e.message : String(e)}`);
       }
-      const arr = Array.isArray(res.output) ? res.output : [];
-      setGenStatus(`✓ ${tool} 完成，返回 ${arr.length} 条结果（详见控制台）`);
-      // eslint-disable-next-line no-console
-      console.log(`[${tool}] 结果：`, res.output);
       return;
     }
 
@@ -216,42 +303,31 @@ export default function WritingPage() {
     let acc = '';
     const base = cfg.append && vars.content ? vars.content + '\n\n' : '';
     startPulse();
-    try {
-      const res = await executeStreamStep(cfg.step, variables, {
-        module: cfg.module,
-        onChunk: (s: string) => {
-          acc += s;
-          const full = base + acc;
-          setVar('content', full);
-          setWordCount(full.replace(/\s/g, '').length);
-          setGenStatus(`${tool}：正在生成…（已收到 ${acc.replace(/\s/g, '').length} 字）`);
-        },
-      });
-      stopPulse();
-      if (!res.ok) {
-        // API 未连通：回退本地模板并明确提示，避免「点了没反应」
-        const fb = base + composeChapter(activeOutline, activeChapter);
-        setVar('content', fb);
-        setWordCount(fb.replace(/\s/g, '').length);
-        setIsGenerating(false);
-        setGenTool(null);
-        setGenStatus(`⚠ ${tool} 未连接 API（${res.error}）；已用本地模板生成占位，请检查 API Key 配置与后端服务是否在运行`);
-        return;
-      }
-      const finalText = base + (res.output || acc);
-      setVar('content', finalText);
-      setWordCount(finalText.replace(/\s/g, '').length);
+    const res = await callLLMStream(cfg.step, variables, cfg.module, (s: string) => {
+      acc += s;
+      const full = base + acc;
+      setVar('content', full);
+      setWordCount(full.replace(/\s/g, '').length);
+      setGenStatus(`${tool}：正在生成…（已收到 ${acc.replace(/\s/g, '').length} 字）`);
+    });
+    stopPulse();
+    if (!res.ok) {
+      // API 未连通：回退本地模板并明确提示，避免「点了没反应」
+      const fb = base + composeChapter(activeOutline, activeChapter);
+      setVar('content', fb);
+      setWordCount(fb.replace(/\s/g, '').length);
       setIsGenerating(false);
       setGenTool(null);
-      setGenProgress(100);
-      setGenStatus(`${tool}：✓ 已生成约 ${finalText.replace(/\s/g, '').length} 字`);
-    } catch (e: unknown) {
-      stopPulse();
-      setIsGenerating(false);
-      setGenTool(null);
-      const msg = e instanceof Error ? e.message : String(e);
-      setGenStatus(`✗ ${tool} 异常：${msg}`);
+      setGenStatus(`⚠ ${tool} 未连接 API（${res.error}）；已用本地模板生成占位，请检查 API Key 配置与后端服务是否在运行`);
+      return;
     }
+    const finalText = base + acc;
+    setVar('content', finalText);
+    setWordCount(finalText.replace(/\s/g, '').length);
+    setIsGenerating(false);
+    setGenTool(null);
+    setGenProgress(100);
+    setGenStatus(`${tool}：✓ 已生成约 ${finalText.replace(/\s/g, '').length} 字`);
   };
 
   return (
